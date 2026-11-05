@@ -162,13 +162,29 @@ class BenchDataTest(unittest.TestCase):
         self.assertEqual(sources.find_domain("Nonexistent Widgets Inc")[1], "unknown")
 
     def test_public_contacts(self):
-        build.main(["public-contacts", "--out", str(self.out), "--since", "2025-06-01", "--until", "2025-06-30", "--headcount"])
+        build.main(["public-contacts", "--out", str(self.out), "--since", "2025-06-01", "--until", "2025-06-30"])
         [c] = read(self.out / "public-contacts.candidates.csv")
         self.assertEqual((c["first_name"], c["last_name"], c["title"]), ("Jane", "Smith", "Chief Marketing Officer"))
         self.assertEqual((c["company_domain"], c["domain_source"], c["employees"]), ("acme.example.com", "sec", "1240"))
         self.assertEqual((c["segment_size"], c["segment_region"]), ("ent", "us"))
         self.assertEqual(build.split_sec_name("DOE JOHN A JR"), ("John", "Doe"))
         self.assertEqual((build.size_segment(50), build.size_segment(51), build.size_segment(1001)), ("smb", "mid", "ent"))
+
+    def test_10k_headcount_and_website(self):
+        cases = {
+            "As of June 30, 2026, the Bank had 158 full-time equivalent employees, consisting of": 158,
+            "we employed approximately 1,576,000 full-time and part-time employees.": 1576000,
+            "As of December 27, 2025, we had a total of 10,791 employees.": 10791,
+            "combined with approximately 2.1 million associates as of January": 2100000,
+            "As of December 31, 2025, we employed 569 persons worldwide, of whom 408": 569,
+            "During fiscal 2026, a total of 18,261 shares were awarded under the plan to certain associates": None,
+            "In 2024 there were approximately 38.5 million people with diabetes in the United States.": None,
+            "employed at the parent company. 26 We believe that our people are our greatest asset": None,
+        }
+        for text, want in cases.items():
+            self.assertEqual(sec.headcount_from_10k(text)[0], want, text)
+        self.assertEqual(sec.website_from_10k("filings are available on our website at https://investors.acme.co.uk/sec")[0], "acme.co.uk")
+        self.assertEqual(sec.website_from_10k("posted on the SEC's website at www.sec.gov and our website, www.beta.example.com.")[0], "beta.example.com")
 
     def test_companies_house(self):
         nums = self.csv_of("uk.csv", [["09999999"]], ["company_number"])

@@ -245,9 +245,9 @@ def split_sec_name(name):
 
 
 def cmd_public_contacts(a):
-    """Current officers at SEC-filing companies (recent Forms 3/4), with the company's domain from
-    SEC records (or its homepage) and size and region from its 10-K and address: W1 mid-market and
-    enterprise rows."""
+    """Current officers at SEC-filing companies (recent Forms 3/4), with the company's domain (from
+    SEC records, then the website its 10-K states, then its homepage), size from the 10-K's headcount
+    and region from its address: W1 mid-market and enterprise rows."""
     officers, per_issuer = [], {}
     idx = sample(sec.index({"3", "4"}, a.since, a.until), a.seed)
     for r in idx:
@@ -271,11 +271,15 @@ def cmd_public_contacts(a):
         sub = sec.submissions(ic) or {}
         f = sec.company_facts(sub) if sub else {"name": "", "website": "", "hq_country": "", "sic_description": ""}
         domain, how = (sources.domain_of(f["website"]), "sec") if f["website"] else ("", "")
+        text, kurl = sec.latest_10k(ic, sub) if sub else ("", "")
+        if not domain and text:
+            domain, _ = sec.website_from_10k(text)
+            how = "10-K" if domain else ""
         if not domain and f["name"]:
             d, status, _, _ = sources.find_domain(f["name"])
             if status == "match":
                 domain, how = d, "homepage"
-        n, snippet, kurl = sec.latest_10k_headcount(ic, sub) if sub and a.headcount else (None, "", "")
+        n, _ = sec.headcount_from_10k(text) if text else (None, "")
         companies[ic] = {"company": f["name"], "company_domain": domain, "domain_source": how,
                          "hq_country": f["hq_country"], "industry": f["sic_description"], "employees": n if n is not None else "",
                          "employees_source_url": kurl}
@@ -371,7 +375,7 @@ def build_parser():
         ciks=dict(required=True), since=dict(type=day, required=True), until=dict(type=day, required=True))
     cmd("public-contacts", cmd_public_contacts, "current officers at SEC filers, with domain, size and region: W1 mid/ent rows",
         since=dict(type=day, required=True), until=dict(type=day, required=True), limit=dict(type=int, default=600),
-        per_company=dict(type=int, default=2), headcount=dict(action="store_true"), seed=dict(type=int, default=2026))
+        per_company=dict(type=int, default=2), seed=dict(type=int, default=2026))
     cmd("domains", cmd_domains, "company domains from the company's own homepage (title must name the company)",
         companies=dict(required=True, help="CSV with a company or name column, e.g. formd-filings.csv"),
         executives=dict(help="formd-executives.csv: also write contacts.candidates.csv for matched companies"),

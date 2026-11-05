@@ -178,24 +178,70 @@ def html_to_text(raw):
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", raw)))
 
 
-EMPLOYEES = re.compile(r"(?:approximately|about|had|employ(?:ed)?)\s+([\d,]{2,9})\s+(?:full[- ]time\s+|total\s+)?(?:employees|people|team members)", re.I)
+COUNT = re.compile(r"(\d[\d,]*(?:\.\d+)?)(\s+million)?\s+((?:[A-Za-z-]+\s+){0,5}?)"
+                   r"(employees|associates|colleagues|team members|persons|people|full-time equivalents)\b", re.I)
+# Only these words may sit between the number and the noun ("1,240 full-time employees"), so
+# "18,261 shares were awarded to associates" or "page 26 We believe our people" don't count.
+BETWEEN_OK = {"full-time", "part-time", "full", "part", "time", "and", "temporary", "active", "equivalent", "employee",
+              "regular", "permanent", "total", "global", "seasonal", "hourly", "salaried", "worldwide", "other", "our"}
+CONTEXT = re.compile(r"employ|workforce|headcount|\bhad\b|total of|as of|approximately|network of|human capital", re.I)
+HUMAN_CAPITAL = re.compile(r"human capital|\bemployees\b\s+(?:and|as of)|number of employees", re.I)
 
 
 def headcount_from_10k(text):
-    """First 'approximately N employees' statement, with a snippet for the reviewer."""
-    m = EMPLOYEES.search(text)
-    if not m:
-        return None, ""
-    return int(m.group(1).replace(",", "")), text[max(0, m.start() - 80): m.end() + 40].strip()
+    """Total headcount stated in a 10-K ("we had approximately 1,240 full-time employees"), searched
+    from the Human Capital section first. Returns (count, snippet) or (None, "")."""
+    hc = HUMAN_CAPITAL.search(text)
+    for start in ([hc.start()] if hc else []) + [0]:
+        for m in COUNT.finditer(text, start):
+            words = m.group(3).lower().split()
+            if any(w not in BETWEEN_OK for w in words) or not CONTEXT.search(text[max(0, m.start() - 70): m.start()]):
+                continue
+            if m.group(4).lower() == "people" and not re.search(r"employ", text[max(0, m.start() - 80): m.end()], re.I):
+                continue
+            raw = m.group(1).replace(",", "")
+            n = float(raw) * (1_000_000 if m.group(2) else 1)
+            if not 1 <= n <= 3_000_000 or ("," not in m.group(1) and not m.group(2) and 1900 <= n <= 2100):
+                continue
+            return int(n), text[max(0, m.start() - 80): m.end() + 40].strip()
+    return None, ""
+
+
+WEBSITE = re.compile(r"(?:website|web site|internet address)[^.]{0,100}?\b((?:https?://)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}))", re.I)
+NOT_COMPANY_SITES = ("sec.gov", "nasdaq.com", "nyse.com", "q4cdn.com", "q4inc.com", "gcs-web.com", "investorroom.com",
+                     "linkedin.com", "twitter.com", "x.com", "facebook.com", "youtube.com", "instagram.com")
+
+
+def registered_domain(host):
+    """Drop the usual website prefixes: www.acme.com, investors.acme.com and ir.acme.com are acme.com."""
+    host = host.lower().strip(".")
+    while re.match(r"(www\d?|investors?|ir|corporate|about)\.[^.]+\.", host):
+        host = host.split(".", 1)[1]
+    return host
+
+
+def website_from_10k(text):
+    """The company's own website as the 10-K states it ("our website is www.acme.com"): (domain, snippet)."""
+    for m in WEBSITE.finditer(text):
+        host = re.sub(r"^https?://", "", m.group(1)).split("/")[0]
+        dom = registered_domain(host)
+        if "." in dom and not any(dom == x or dom.endswith("." + x) for x in NOT_COMPANY_SITES):
+            return dom, text[max(0, m.start() - 20): m.end() + 20].strip()
+    return "", ""
+
+
+def latest_10k(cik, sub):
+    """(text, url) of the company's latest 10-K, or ("", "") if it has none."""
+    k = next((f for f in recent_filings(sub) if f["form"] == "10-K"), None)
+    if not k:
+        return "", ""
+    url = archive_url(cik, k["accession"], k["doc"])
+    return html_to_text(http.get_text(url, headers=headers()) or ""), url
 
 
 def latest_10k_headcount(cik, sub):
-    k = next((f for f in recent_filings(sub) if f["form"] == "10-K"), None)
-    if not k:
-        return None, "", ""
-    url = archive_url(cik, k["accession"], k["doc"])
-    text = http.get_text(url, headers=headers())
-    n, snippet = headcount_from_10k(html_to_text(text or ""))
+    text, url = latest_10k(cik, sub)
+    n, snippet = headcount_from_10k(text) if text else (None, "")
     return n, snippet, url
 
 
