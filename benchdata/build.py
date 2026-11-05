@@ -5,6 +5,7 @@ review disagreements, spot-check 20 rows, then copy the reviewed rows to the key
 bench's ANSWER-KEYS.md.
 """
 import argparse
+import collections
 import csv
 import random
 import sys
@@ -220,6 +221,81 @@ def cmd_events(a):
                                                   "public_source_url", "logged_by"])
 
 
+EMEA = set("GB IE FR DE NL BE LU CH AT IT ES PT SE NO DK FI IS PL CZ IL AE ZA".split())
+APAC = set("AU NZ JP KR SG HK CN TW IN ID MY PH TH VN".split())
+
+
+def region(country):
+    return "us" if country == "US" else "emea" if country in EMEA else "apac" if country in APAC else ""
+
+
+def size_segment(employees):
+    """W1 size cells: smb 1-50, mid 51-1,000, ent 1,001+ employees."""
+    if not isinstance(employees, int):
+        return ""
+    return "smb" if employees <= 50 else "mid" if employees <= 1000 else "ent"
+
+
+def split_sec_name(name):
+    """Forms 3/4 list owners as 'LAST FIRST MIDDLE': return (first, last) in title case."""
+    parts = [p for p in name.replace(",", " ").split() if p.lower().rstrip(".") not in ("jr", "sr", "ii", "iii", "iv", "md", "phd")]
+    if len(parts) < 2:
+        return "", name.title()
+    return parts[1].title(), parts[0].title()
+
+
+def cmd_public_contacts(a):
+    """Current officers at SEC-filing companies (recent Forms 3/4), with the company's domain from
+    SEC records (or its homepage) and size and region from its 10-K and address: W1 mid-market and
+    enterprise rows."""
+    officers, per_issuer = [], {}
+    idx = sample(sec.index({"3", "4"}, a.since, a.until), a.seed)
+    for r in idx:
+        if len(officers) >= a.limit:
+            break
+        try:
+            people, url = sec.ownership(r["cik"], r["accession"])
+        except http.FetchError:
+            continue
+        for p in people:
+            ic = p["issuer_cik"].lstrip("0")
+            if not (p["is_officer"] and p["officer_title"]) or per_issuer.get(ic, 0) >= a.per_company:
+                continue
+            if any(o["owner_cik"] == p["owner_cik"] and o["issuer_cik"] == ic for o in officers):
+                continue
+            per_issuer[ic] = per_issuer.get(ic, 0) + 1
+            officers.append({**p, "issuer_cik": ic, "filed": r["date"], "person_source_url": url})
+        progress(len(officers), a.limit, every=50)
+    companies = {}
+    for i, ic in enumerate(per_issuer, 1):
+        sub = sec.submissions(ic) or {}
+        f = sec.company_facts(sub) if sub else {"name": "", "website": "", "hq_country": "", "sic_description": ""}
+        domain, how = (sources.domain_of(f["website"]), "sec") if f["website"] else ("", "")
+        if not domain and f["name"]:
+            d, status, _, _ = sources.find_domain(f["name"])
+            if status == "match":
+                domain, how = d, "homepage"
+        n, snippet, kurl = sec.latest_10k_headcount(ic, sub) if sub and a.headcount else (None, "", "")
+        companies[ic] = {"company": f["name"], "company_domain": domain, "domain_source": how,
+                         "hq_country": f["hq_country"], "industry": f["sic_description"], "employees": n if n is not None else "",
+                         "employees_source_url": kurl}
+        progress(i, len(per_issuer), every=25)
+    rows = []
+    for o in officers:
+        c = companies[o["issuer_cik"]]
+        first, last = split_sec_name(o["owner_name"])
+        rows.append({"first_name": first, "last_name": last, "title": o["officer_title"], **c, "cik": o["issuer_cik"],
+                     "segment_size": size_segment(c["employees"] if isinstance(c["employees"], int) else None),
+                     "segment_region": region(c["hq_country"]), "filed": o["filed"],
+                     "person_source_url": o["person_source_url"], "retrieved_at": http.now()})
+    cols = ["first_name", "last_name", "title", "company", "company_domain", "domain_source", "cik", "hq_country", "industry",
+            "employees", "segment_size", "segment_region", "filed", "person_source_url", "employees_source_url", "retrieved_at"]
+    write(a.out, "public-contacts.candidates.csv", rows, cols)
+    ready = [r for r in rows if r["company_domain"]]
+    print(f"{len(ready)} of {len(rows)} officers have a company domain; "
+          f"size cells: {dict(sorted(collections.Counter(r['segment_size'] or '?' for r in ready).items()))}")
+
+
 def cmd_domains(a):
     """Company domains from the company's own homepage: name-based guesses, accepted only when the
     page title names the company. With --executives, also writes contacts ready to enrich."""
@@ -293,6 +369,9 @@ def build_parser():
         ciks=dict(required=True), since=dict(type=day, required=True), per_company=dict(type=int, default=5))
     cmd("events", cmd_events, "T4 event feed for watched companies",
         ciks=dict(required=True), since=dict(type=day, required=True), until=dict(type=day, required=True))
+    cmd("public-contacts", cmd_public_contacts, "current officers at SEC filers, with domain, size and region: W1 mid/ent rows",
+        since=dict(type=day, required=True), until=dict(type=day, required=True), limit=dict(type=int, default=600),
+        per_company=dict(type=int, default=2), headcount=dict(action="store_true"), seed=dict(type=int, default=2026))
     cmd("domains", cmd_domains, "company domains from the company's own homepage (title must name the company)",
         companies=dict(required=True, help="CSV with a company or name column, e.g. formd-filings.csv"),
         executives=dict(help="formd-executives.csv: also write contacts.candidates.csv for matched companies"),

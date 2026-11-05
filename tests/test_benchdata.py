@@ -161,6 +161,15 @@ class BenchDataTest(unittest.TestCase):
         self.assertEqual((c["first_name"], c["company_domain"]), ("Ana", "beta-labs.com"))
         self.assertEqual(sources.find_domain("Nonexistent Widgets Inc")[1], "unknown")
 
+    def test_public_contacts(self):
+        build.main(["public-contacts", "--out", str(self.out), "--since", "2025-06-01", "--until", "2025-06-30", "--headcount"])
+        [c] = read(self.out / "public-contacts.candidates.csv")
+        self.assertEqual((c["first_name"], c["last_name"], c["title"]), ("Jane", "Smith", "Chief Marketing Officer"))
+        self.assertEqual((c["company_domain"], c["domain_source"], c["employees"]), ("acme.example.com", "sec", "1240"))
+        self.assertEqual((c["segment_size"], c["segment_region"]), ("ent", "us"))
+        self.assertEqual(build.split_sec_name("DOE JOHN A JR"), ("John", "Doe"))
+        self.assertEqual((build.size_segment(50), build.size_segment(51), build.size_segment(1001)), ("smb", "mid", "ent"))
+
     def test_companies_house(self):
         nums = self.csv_of("uk.csv", [["09999999"]], ["company_number"])
         build.main(["uk", "--out", str(self.out), "--numbers", nums])
