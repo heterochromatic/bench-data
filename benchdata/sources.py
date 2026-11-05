@@ -148,7 +148,7 @@ def name_tokens(company):
     return [w for w in words if w not in LEGAL]
 
 
-def domain_guesses(company, max_guesses=8):
+def domain_guesses(company, max_guesses=8, tlds=TLDS):
     t = name_tokens(company)
     if not t:
         return []
@@ -158,7 +158,7 @@ def domain_guesses(company, max_guesses=8):
     if len(t) > 2:
         stems.append("".join(t[:2]))
     stems = list(dict.fromkeys(s for s in stems if len(s) >= 3))
-    return [s + tld for tld in TLDS for s in stems][:max_guesses]
+    return [s + tld for tld in tlds for s in stems][:max_guesses]
 
 
 def page_names(html_text):
@@ -197,11 +197,11 @@ def _check(company, domain):
     return match_score(company, names), (names or [""])[0]
 
 
-def find_domain(company, batch=4):
+def find_domain(company, batch=4, tlds=TLDS):
     """Try name-based domains, `batch` at a time in priority order, and stop at the first batch with a
     full match (the earliest guess in that batch wins). Returns (domain, status, page title, tried);
     status is match, review (partial match) or unknown."""
-    guesses, tried, best = domain_guesses(company), [], (None, 0.0, "")
+    guesses, tried, best = domain_guesses(company, tlds=tlds), [], (None, 0.0, "")
     with ThreadPoolExecutor(max_workers=batch) as pool:
         for start in range(0, len(guesses), batch):
             chunk = guesses[start:start + batch]
@@ -214,3 +214,40 @@ def find_domain(company, batch=4):
     if best[0] and best[1] >= 0.5:
         return best[0], "review", best[2], tried
     return "", "unknown", "", tried
+
+
+UK_TLDS = (".co.uk", ".com", ".io", ".ai")
+TECH_SIC = ("62012", "62020", "62090", "63110", "58290")   # software, IT consultancy, other IT, data processing, publishing
+
+
+def ch_search(sic_codes, company_type="ltd", size=100, start=0):
+    """Active companies by SIC code (Companies House advanced search)."""
+    data = http.get_json(f"{CH}/advanced-search/companies", headers=ch_headers(),
+                         params={"company_status": "active", "sic_codes": ",".join(sic_codes), "company_type": company_type,
+                                 "size": size, "start_index": start})
+    return [{"company_number": c.get("company_number", ""), "name": c.get("company_name", ""),
+             "sic_codes": ";".join(c.get("sic_codes", []))} for c in (data or {}).get("items", [])]
+
+
+AVG_EMPLOYEES = re.compile(r'name="[^"]*AverageNumberEmployeesDuringPeriod"[^>]*>\s*([\d,]+)\s*<', re.I)
+
+
+def ch_headcount(number):
+    """Average employees from the latest accounts filed as iXBRL: (count, document url) or (None, "")."""
+    hist = http.get_json(f"{CH}/company/{number}/filing-history", headers=ch_headers(),
+                         params={"category": "accounts", "items_per_page": 3})
+    for item in (hist or {}).get("items", []):
+        meta = (item.get("links") or {}).get("document_metadata")
+        if not meta:
+            continue
+        doc = http.get_text(f"{meta}/content", headers={**ch_headers(), "Accept": "application/xhtml+xml"})
+        m = AVG_EMPLOYEES.search(doc or "")
+        if m:
+            return int(m.group(1).replace(",", "")), meta
+    return None, ""
+
+
+def split_ch_name(name):
+    """Companies House lists officers as 'SURNAME, Forenames': return (first, last) in title case."""
+    last, _, first = name.partition(",")
+    return (first.split() or [""])[0].title(), last.strip().title()

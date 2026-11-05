@@ -300,6 +300,41 @@ def cmd_public_contacts(a):
           f"size cells: {dict(sorted(collections.Counter(r['segment_size'] or '?' for r in ready).items()))}")
 
 
+def cmd_uk_contacts(a):
+    """Current directors at active UK companies (Companies House), with domain from the company's
+    homepage (.co.uk first), size from the average employees in its filed accounts: W1 EMEA rows."""
+    companies, start = [], 0
+    while len(companies) < a.companies:
+        page = sources.ch_search(a.sic.split(","), a.company_type, size=100, start=start)
+        if not page:
+            break
+        companies += page
+        start += 100
+    random.Random(a.seed).shuffle(companies)
+    rows = []
+    for i, c in enumerate(companies[: a.companies], 1):
+        directors = [o for o in sources.ch_officers(c["company_number"]) if o["role"] == "director" and not o["resigned_on"]]
+        if not directors:
+            continue
+        domain, status, _, _ = sources.find_domain(c["name"], tlds=sources.UK_TLDS)
+        n, acc_url = sources.ch_headcount(c["company_number"]) if domain and status == "match" else (None, "")
+        for o in directors[: a.per_company]:
+            first, last = sources.split_ch_name(o["name"])
+            rows.append({"first_name": first, "last_name": last, "title": o["occupation"], "company": c["name"],
+                         "company_domain": domain if status == "match" else "", "domain_source": "homepage" if status == "match" else "",
+                         "company_number": c["company_number"], "hq_country": "GB", "industry": c["sic_codes"],
+                         "employees": n if n is not None else "", "segment_size": size_segment(n), "segment_region": "emea",
+                         "person_source_url": f"{sources.CH}/company/{c['company_number']}/officers",
+                         "employees_source_url": acc_url, "retrieved_at": http.now()})
+        progress(i, a.companies, every=25)
+    cols = ["first_name", "last_name", "title", "company", "company_domain", "domain_source", "company_number", "hq_country",
+            "industry", "employees", "segment_size", "segment_region", "person_source_url", "employees_source_url", "retrieved_at"]
+    write(a.out, "uk-contacts.candidates.csv", rows, cols)
+    ready = [r for r in rows if r["company_domain"]]
+    print(f"{len(ready)} of {len(rows)} directors have a company domain; "
+          f"size cells: {dict(sorted(collections.Counter(r['segment_size'] or '?' for r in ready).items()))}")
+
+
 def cmd_domains(a):
     """Company domains from the company's own homepage: name-based guesses, accepted only when the
     page title names the company. With --executives, also writes contacts ready to enrich."""
@@ -376,6 +411,10 @@ def build_parser():
     cmd("public-contacts", cmd_public_contacts, "current officers at SEC filers, with domain, size and region: W1 mid/ent rows",
         since=dict(type=day, required=True), until=dict(type=day, required=True), limit=dict(type=int, default=600),
         per_company=dict(type=int, default=2), seed=dict(type=int, default=2026))
+    cmd("uk-contacts", cmd_uk_contacts, "current directors at active UK companies, with domain and accounts headcount: W1 EMEA rows",
+        sic=dict(default=",".join(sources.TECH_SIC), help="comma-separated SIC codes"),
+        company_type=dict(default="ltd", choices=["ltd", "plc"], help="plc for larger companies"),
+        companies=dict(type=int, default=300), per_company=dict(type=int, default=2), seed=dict(type=int, default=2026))
     cmd("domains", cmd_domains, "company domains from the company's own homepage (title must name the company)",
         companies=dict(required=True, help="CSV with a company or name column, e.g. formd-filings.csv"),
         executives=dict(help="formd-executives.csv: also write contacts.candidates.csv for matched companies"),
@@ -384,7 +423,18 @@ def build_parser():
     return p
 
 
+def load_env(path=Path(__file__).resolve().parents[1] / ".env"):
+    """KEY=VALUE lines from bench-data/.env (gitignored); variables already set win."""
+    import os
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            k, sep, v = line.strip().partition("=")
+            if sep and k and not k.startswith("#") and v.strip() and k.strip() not in os.environ:
+                os.environ[k.strip()] = v.strip().strip('"').strip("'")
+
+
 def main(argv=None):
+    load_env()
     args = build_parser().parse_args(argv)
     try:
         args.fn(args)

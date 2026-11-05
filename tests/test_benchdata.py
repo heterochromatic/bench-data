@@ -30,7 +30,9 @@ ROUTES = [  # (substring of URL, fixture file); first match wins
     ("boards-api.greenhouse.io/v1/boards/acme/", "greenhouse.json"),
     ("https://betalabs.com/", "home-parked.html"), ("https://beta-labs.com/", "home-beta.html"),
     ("action=wbsearchentities", "wd-search.json"), ("action=wbgetentities", "wd-entities.json"),
-    ("/company/09999999/officers", "ch-officers.json"), ("/company/09999999", "ch-company.json"),
+    ("/company/09999999/officers", "ch-officers.json"), ("/company/09999999/filing-history", "ch-filings.json"),
+    ("/advanced-search/companies", "ch-search.json"), ("/document/DOC123/content", "ch-accounts.xhtml"),
+    ("https://deltadata.co.uk/", "home-delta.html"), ("/company/09999999", "ch-company.json"),
 ]
 
 
@@ -185,6 +187,21 @@ class BenchDataTest(unittest.TestCase):
             self.assertEqual(sec.headcount_from_10k(text)[0], want, text)
         self.assertEqual(sec.website_from_10k("filings are available on our website at https://investors.acme.co.uk/sec")[0], "acme.co.uk")
         self.assertEqual(sec.website_from_10k("posted on the SEC's website at www.sec.gov and our website, www.beta.example.com.")[0], "beta.example.com")
+
+    def test_uk_contacts(self):
+        build.main(["uk-contacts", "--out", str(self.out), "--companies", "1"])
+        [c] = read(self.out / "uk-contacts.candidates.csv")   # the resigned director is left out
+        self.assertEqual((c["first_name"], c["last_name"], c["title"]), ("Lee", "Kim", "Chief Revenue Officer"))
+        self.assertEqual((c["company_domain"], c["employees"], c["segment_size"], c["segment_region"]),
+                         ("deltadata.co.uk", "84", "mid", "emea"))
+        self.assertEqual(sources.split_ch_name("PATEL, Ravi Kumar"), ("Ravi", "Patel"))
+
+    def test_env_file_loads_without_overriding(self):
+        envf = self.out / ".env"
+        envf.write_text("# x\nBD_TEST_A=from-file\nCOMPANIES_HOUSE_KEY=file-key\n")
+        build.load_env(envf)
+        self.assertEqual((os.environ["BD_TEST_A"], os.environ["COMPANIES_HOUSE_KEY"]), ("from-file", "test-key"))
+        os.environ.pop("BD_TEST_A")
 
     def test_companies_house(self):
         nums = self.csv_of("uk.csv", [["09999999"]], ["company_number"])
