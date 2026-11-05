@@ -63,12 +63,16 @@ FUND_GROUPS = {"Pooled Investment Fund", "Investing", "REITS and Finance", "Othe
 def cmd_formd(a):
     """Private US funding rounds and their executives: T1/W1 contacts, T2 funding reference.
     Investment funds and real-estate vehicles are skipped unless --include-funds."""
-    filings, people, skipped = [], [], 0
+    filings, people, skipped, failed = [], [], 0, []
     idx = sample(sec.index({"D"}, a.since, a.until), a.seed)
     for i, r in enumerate(idx, 1):
         if len(filings) >= a.limit:
             break
-        filing, persons, url = sec.form_d(r["cik"], r["accession"])
+        try:
+            filing, persons, url = sec.form_d(r["cik"], r["accession"])
+        except http.FetchError as e:
+            failed.append(f"{r['accession']}: {e}")
+            continue
         progress(len(filings), a.limit)
         if not filing:
             continue
@@ -85,6 +89,8 @@ def cmd_formd(a):
     write(a.out, "formd-executives.csv", people, ["first_name", "last_name", "relationship", *cols])
     if skipped:
         print(f"skipped {skipped} investment-fund or real-estate filings")
+    if failed:
+        print(f"{len(failed)} filings couldn't be fetched (first: {failed[0]})")
 
 
 def cmd_officers(a):

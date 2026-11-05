@@ -20,8 +20,8 @@ class FetchError(Exception):
         self.status = status
 
 
-MIN_INTERVAL = {"sec.gov": 0.15, "data.sec.gov": 0.15, "www.sec.gov": 0.15,   # SEC allows 10 requests a second
-                "wikidata.org": 1.0}
+# SEC allows 10 requests a second but throttles bursts; stay near 4.
+MIN_INTERVAL = {"sec.gov": 0.25, "wikidata.org": 1.0}
 DEFAULT_INTERVAL = 0.5
 _last = {}
 _lock = threading.Lock()
@@ -56,7 +56,14 @@ def _pace(host):
         time.sleep(wait)
 
 
-def get(url, params=None, headers=None, timeout=30, tries=4, cache=True):
+def _backoff(host, status, attempt):
+    """Seconds to wait before retrying. An SEC rate limit can last minutes, so wait it out."""
+    if status == 429 and (host == "sec.gov" or host.endswith(".sec.gov")):
+        return [30, 60, 120, 240][min(attempt, 3)]
+    return min(60, 2 ** attempt * (5 if status == 429 else 2))
+
+
+def get(url, params=None, headers=None, timeout=30, tries=5, cache=True):
     """GET and return bytes; None on 404. Raises FetchError after retries."""
     if params:
         url = f"{url}?{urllib.parse.urlencode(params)}"
@@ -78,7 +85,7 @@ def get(url, params=None, headers=None, timeout=30, tries=4, cache=True):
         if status in (403, 401):
             raise FetchError(f"{status} from {host}: check the contact header or API key", status)
         if attempt < tries - 1:
-            time.sleep(min(60, 2 ** attempt * (5 if status == 429 else 2)))
+            time.sleep(_backoff(host, status, attempt))
     raise FetchError(f"gave up on {url} (last status {status})", status)
 
 

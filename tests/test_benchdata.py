@@ -197,6 +197,11 @@ class BenchDataTest(unittest.TestCase):
         finally:
             sources.time.sleep = orig_sleep
 
+    def test_sec_rate_limit_waits_minutes(self):
+        self.assertEqual(http._backoff("www.sec.gov", 429, 0), 30)
+        self.assertEqual(http._backoff("data.sec.gov", 429, 2), 120)
+        self.assertEqual(http._backoff("example.org", 503, 1), 4)
+
     def test_retry_then_give_up(self):
         http.transport = lambda url, h, t: (503, b"")
         orig_sleep = http.time.sleep
