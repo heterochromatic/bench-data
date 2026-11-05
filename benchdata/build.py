@@ -213,6 +213,33 @@ def cmd_events(a):
                                                   "public_source_url", "logged_by"])
 
 
+def cmd_domains(a):
+    """Company domains from the company's own homepage: name-based guesses, accepted only when the
+    page title names the company. With --executives, also writes contacts ready to enrich."""
+    out, companies = [], read(a.companies)
+    for i, c in enumerate(companies, 1):
+        name = c.get("company") or c.get("name") or ""
+        domain, status, title, tried = sources.find_domain(name)
+        out.append({"company": name, "cik": c.get("issuer_cik") or c.get("cik", ""), "domain": domain, "status": status,
+                    "page_title": title, "tried": ";".join(tried), "source_url": f"https://{domain}/" if domain else "",
+                    "retrieved_at": http.now()})
+        progress(i, len(companies), every=10)
+    write(a.out, "domains.candidates.csv", out, ["company", "cik", "domain", "status", "page_title", "tried", "source_url", "retrieved_at"])
+    found = sum(r["status"] == "match" for r in out)
+    print(f"{found} matched, {sum(r['status'] == 'review' for r in out)} to review, {sum(r['status'] == 'unknown' for r in out)} unknown")
+    if a.executives:
+        by_cik = {r["cik"].lstrip("0"): r for r in out if r["status"] == "match"}
+        contacts = []
+        for e in read(a.executives):
+            d = by_cik.get((e.get("issuer_cik") or "").lstrip("0"))
+            if d:
+                contacts.append({"first_name": e["first_name"], "last_name": e["last_name"], "company": e["company"],
+                                 "company_domain": d["domain"], "relationship": e.get("relationship", ""),
+                                 "person_source_url": e.get("source_url", ""), "domain_source_url": d["source_url"]})
+        write(a.out, "contacts.candidates.csv", contacts, ["first_name", "last_name", "company", "company_domain", "relationship",
+                                                           "person_source_url", "domain_source_url"])
+
+
 def cmd_uk(a):
     """Companies House: profiles and officers (appointments and resignations) for UK companies."""
     profiles, officers, numbers = [], [], [r["company_number"] for r in read(a.numbers)]
@@ -257,6 +284,9 @@ def build_parser():
         ciks=dict(required=True), since=dict(type=day, required=True), per_company=dict(type=int, default=5))
     cmd("events", cmd_events, "T4 event feed for watched companies",
         ciks=dict(required=True), since=dict(type=day, required=True), until=dict(type=day, required=True))
+    cmd("domains", cmd_domains, "company domains from the company's own homepage (title must name the company)",
+        companies=dict(required=True, help="CSV with a company or name column, e.g. formd-filings.csv"),
+        executives=dict(help="formd-executives.csv: also write contacts.candidates.csv for matched companies"))
     cmd("uk", cmd_uk, "Companies House profiles and officers", numbers=dict(required=True, help="CSV with company_number"))
     return p
 

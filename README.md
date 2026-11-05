@@ -32,6 +32,7 @@ OUT=../clay-bench-enrichment-waterfall/private/datasets/candidates
 | `jobs --companies file` | Greenhouse, Lever and Ashby public boards | `job-evidence.csv` | T5 Salesforce evidence; T2 SDR openings |
 | `press-contacts --ciks file --since` | Named emails in 8-K press-release exhibits | `press-contacts.candidates.csv` | Known-email (gold) candidates; on-domain flag |
 | `events --ciks watchlist --since --until` | SEC 8-K Item 5.02 and Form D | `t4-events.candidates.csv` | T4 event log, run daily during the window |
+| `domains --companies file [--executives file]` | The company's own homepage | `domains.candidates.csv` (match / review / unknown), `contacts.candidates.csv` | Domains for Form D companies (they have none on file); contacts ready to enrich: first name, last name, company domain |
 | `uk --numbers file` | UK Companies House | `uk-companies.csv`, `uk-officers.csv` | EMEA contacts; officer resignations as job changes |
 
 Input files are plain CSVs with a `cik`, `domain` (and optional `name`) or `company_number` column.
@@ -50,6 +51,7 @@ Then review every row marked `unknown`, and every row where the seed company fil
 - **Random, not alphabetical:** index files are sorted by company name, so commands sample filings in a fixed random order (`--seed`).
 - **Unknown, not guessed:** a value without first-hand evidence is written as `unknown`. For example, an officer with no Form 3/4 in the last 270 days is unknown, not unchanged.
 - **Job boards:** "none" means no public board was found or no ad mentions Salesforce. That's unknown, not "doesn't use Salesforce".
+- **Domains:** guessed from the company name (`.com`, `.ai`, `.io`, `.co`), and accepted only when the homepage's title or site name contains every word of the company name. Parked "for sale" pages are rejected. A partial match is marked `review`, nothing found is `unknown`. First live run: 12 of 20 matched, 3 to review, 5 unknown, in about 2.5 minutes (failed guesses wait for their timeout).
 - **Press contacts:** generic inboxes (`ir@`, `press@`, ...) are dropped, and each row says whether the email is on the company's own domain. Agency contacts drop out under the benchmarks' domain check.
 
 ## Limits

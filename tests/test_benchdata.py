@@ -28,6 +28,7 @@ ROUTES = [  # (substring of URL, fixture file); first match wins
     ("/1000001/000100000126000805/index.json", "index-8k.json"),
     ("/1000001/000100000126000805/acme-ex99_1.htm", "acme-ex99.htm"),
     ("boards-api.greenhouse.io/v1/boards/acme/", "greenhouse.json"),
+    ("https://betalabs.com/", "home-parked.html"), ("https://beta-labs.com/", "home-beta.html"),
     ("action=wbsearchentities", "wd-search.json"), ("action=wbgetentities", "wd-entities.json"),
     ("/company/09999999/officers", "ch-officers.json"), ("/company/09999999", "ch-company.json"),
 ]
@@ -148,6 +149,17 @@ class BenchDataTest(unittest.TestCase):
         build.main(["events", "--out", str(self.out), "--ciks", ciks, "--since", "2026-06-01", "--until", "2026-06-30"])
         kinds = sorted(r["event_type"] for r in read(self.out / "t4-events.candidates.csv"))
         self.assertEqual(kinds, ["funding (Form D)", "job change (8-K 5.02)"])
+
+    def test_domains_from_homepage_title(self):
+        build.main(["formd", "--out", str(self.out), "--since", "2026-04-01", "--until", "2026-06-30"])
+        build.main(["domains", "--out", str(self.out), "--companies", str(self.out / "formd-filings.csv"),
+                    "--executives", str(self.out / "formd-executives.csv")])
+        [d] = read(self.out / "domains.candidates.csv")
+        self.assertEqual((d["domain"], d["status"]), ("beta-labs.com", "match"))   # betalabs.com is parked, skipped
+        self.assertTrue(d["tried"].startswith("betalabs.com;beta-labs.com"))
+        [c] = read(self.out / "contacts.candidates.csv")
+        self.assertEqual((c["first_name"], c["company_domain"]), ("Ana", "beta-labs.com"))
+        self.assertEqual(sources.find_domain("Nonexistent Widgets Inc")[1], "unknown")
 
     def test_companies_house(self):
         nums = self.csv_of("uk.csv", [["09999999"]], ["company_number"])

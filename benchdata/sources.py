@@ -1,6 +1,7 @@
 """Other free, first-hand sources: public job boards (Greenhouse, Lever, Ashby), Wikidata and
 UK Companies House (needs COMPANIES_HOUSE_KEY, a free key)."""
 import base64
+import html as htmllib
 import os
 import re
 import urllib.parse
@@ -127,3 +128,73 @@ def ch_officers(number):
     return [{"company_number": number, "name": o.get("name", ""), "role": o.get("officer_role", ""),
              "occupation": o.get("occupation", ""), "appointed_on": o.get("appointed_on", ""),
              "resigned_on": o.get("resigned_on", "")} for o in (data or {}).get("items", [])]
+
+
+# --- Domain finder (the company's own website) -------------------------------------------------------
+
+LEGAL = {"inc", "incorporated", "corp", "corporation", "co", "company", "llc", "ltd", "limited", "lp", "llp", "plc",
+         "pbc", "holdings", "holding", "the", "and", "of"}
+TLDS = (".com", ".ai", ".io", ".co")
+PARKED = re.compile(r"domain (is )?for sale|buy this domain|parked|hugedomains|godaddy|sedo|dan\.com|this domain|coming soon", re.I)
+TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+SITE_NAME = re.compile(r'<meta[^>]+property=["\']og:site_name["\'][^>]+content=["\']([^"\']+)', re.I)
+SITE_HEADERS = {"User-Agent": "bench-data/0.1 (+https://promptingcompany.com)"}
+
+
+def name_tokens(company):
+    words = re.sub(r"[^a-z0-9 ]", " ", company.lower().replace("&", " and ")).split()
+    return [w for w in words if w not in LEGAL]
+
+
+def domain_guesses(company, max_guesses=8):
+    t = name_tokens(company)
+    if not t:
+        return []
+    stems = ["".join(t), "-".join(t)]
+    if len(t) > 1 and len(t[0]) >= 5:
+        stems.append(t[0])
+    if len(t) > 2:
+        stems.append("".join(t[:2]))
+    stems = list(dict.fromkeys(s for s in stems if len(s) >= 3))
+    return [s + tld for tld in TLDS for s in stems][:max_guesses]
+
+
+def page_names(html_text):
+    """The homepage's title and og:site_name, unescaped."""
+    out = [m.group(1) for m in (TITLE.search(html_text), SITE_NAME.search(html_text)) if m]
+    return [htmllib.unescape(re.sub(r"\s+", " ", s)).strip() for s in out]
+
+
+def match_score(company, names):
+    """Share of the company's name tokens found in the page's title or site name (spaces ignored)."""
+    tokens = name_tokens(company)
+    hay = " ".join(names).lower()
+    flat = re.sub(r"[^a-z0-9]", "", hay)
+    if not tokens or PARKED.search(hay):
+        return 0.0
+    if "".join(tokens) in flat:
+        return 1.0
+    return sum(t in flat for t in tokens) / len(tokens)
+
+
+def find_domain(company):
+    """Try name-based domains; accept one whose homepage names the company.
+    Returns (domain, status, page title, tried). status: match, review (partial match) or unknown."""
+    tried, best = [], (None, 0.0, "")
+    for d in domain_guesses(company):
+        tried.append(d)
+        try:
+            body = http.get(f"https://{d}/", headers=SITE_HEADERS, timeout=8, tries=1)
+        except http.FetchError:
+            continue
+        if not body:
+            continue
+        names = page_names(body[:200_000].decode("utf-8", "replace"))
+        score = match_score(company, names)
+        if score == 1.0:
+            return d, "match", (names or [""])[0], tried
+        if score > best[1]:
+            best = (d, score, (names or [""])[0])
+    if best[0] and best[1] >= 0.5:
+        return best[0], "review", best[2], tried
+    return "", "unknown", "", tried
