@@ -1,6 +1,7 @@
 """Offline tests: every source answers from recorded fixtures through a fake transport. Run:
     python3 -I -m unittest discover -s tests
 """
+import collections
 import csv
 import os
 import sys
@@ -202,6 +203,26 @@ class BenchDataTest(unittest.TestCase):
         build.load_env(envf)
         self.assertEqual((os.environ["BD_TEST_A"], os.environ["COMPANIES_HOUSE_KEY"]), ("from-file", "test-key"))
         os.environ.pop("BD_TEST_A")
+
+    def test_w1_assemble_caps_cells_and_dedupes(self):
+        c = self.out / "cands"
+        c.mkdir()
+        cols = ["first_name", "last_name", "company", "company_domain", "person_source_url", "domain_source_url"]
+        with open(c / "contacts.candidates.csv", "w", newline="") as f:
+            w = csv.writer(f); w.writerow(cols)
+            w.writerows([[f"F{i}", "L", "Co", f"d{i}.example.com", "u", "u"] for i in range(5)] + [["F0", "L", "Co", "d0.example.com", "u", "u"]])
+        pcols = ["first_name", "last_name", "company", "company_domain", "employees", "segment_size", "segment_region", "hq_country", "employees_source_url"]
+        with open(c / "public-contacts.candidates.csv", "w", newline="") as f:
+            w = csv.writer(f); w.writerow(pcols)
+            w.writerows([["A", "B", "Big", "big.example.com", "5000", "ent", "us", "US", "k"], ["C", "D", "Nod", "", "", "", "", "", ""],
+                         ["E", "F", "Apac", "ap.example.com", "900", "mid", "apac", "JP", "k"]])
+        build.main(["w1-assemble", "--out", str(self.out), "--candidates", str(c), "--cap", "3"])
+        rows = read(self.out / "w1-input.csv")
+        cells = collections.Counter(f"{r['segment_size']}/{r['segment_region']}" for r in rows)
+        self.assertEqual(dict(cells), {"smb/us": 3, "ent/us": 1})   # capped, no APAC, no domainless row, F0 once
+        self.assertEqual(sorted(r["input_id"] for r in rows), ["W0001", "W0002", "W0003", "W0004"])
+        [k] = read(self.out / "w1-firmographics-truth.candidates.csv")
+        self.assertEqual((k["true_employee_count"], k["true_hq_country"]), ("5000", "US"))
 
     def test_companies_house(self):
         nums = self.csv_of("uk.csv", [["09999999"]], ["company_number"])

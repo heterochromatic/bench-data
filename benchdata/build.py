@@ -341,6 +341,48 @@ def cmd_uk_contacts(a):
           f"size cells: {dict(sorted(collections.Counter(r['segment_size'] or '?' for r in ready).items()))}")
 
 
+def cmd_w1_assemble(a):
+    """Merge candidate pools into the W1 input: one row per person at a matched domain, capped per
+    size x region cell, with a private provenance file and a firmographic-key candidate sample."""
+    d = Path(a.candidates)
+    pools = []
+    if (d / "contacts.candidates.csv").exists():   # Form D executives: private US companies
+        pools += [{**r, "segment_size": "smb", "segment_region": "us", "size_basis": "assumed (Form D private company)",
+                   "employees": "", "hq_country": "US", "industry": "", "source": "form-d"} for r in read(d / "contacts.candidates.csv")]
+    for name, src in (("public-contacts.candidates.csv", "sec-filer"), ("uk-contacts.candidates.csv", "companies-house")):
+        if (d / name).exists():
+            pools += [{**r, "size_basis": "headcount" if r.get("employees") else "", "source": src} for r in read(d / name)]
+    seen, rows = set(), []
+    for r in pools:
+        key = (r["first_name"].lower(), r["last_name"].lower(), (r["company_domain"] or "").lower())
+        cell = f"{r.get('segment_size')}/{r.get('segment_region')}"
+        if not all(key) or key in seen or cell not in a.cells.split(","):
+            continue
+        seen.add(key)
+        rows.append({**r, "cell": cell})
+    rng = random.Random(a.seed)
+    rng.shuffle(rows)
+    counts, picked = collections.Counter(), []
+    for r in rows:
+        if counts[r["cell"]] < a.cap:
+            counts[r["cell"]] += 1
+            picked.append(r)
+    for i, r in enumerate(picked, 1):
+        r["input_id"] = f"W{i:04d}"
+    write(a.out, "w1-input.csv", picked, ["input_id", "first_name", "last_name", "company_domain", "segment_size", "segment_region"])
+    write(a.out, "w1-input-sources.csv", picked, ["input_id", "company", "company_domain", "cell", "size_basis", "employees",
+                                                  "hq_country", "source", "person_source_url", "domain_source_url",
+                                                  "domain_source", "employees_source_url"])
+    sized = [r for r in picked if r.get("employees")]
+    sample = rng.sample(sized, min(a.firmographic_sample, len(sized)))
+    write(a.out, "w1-firmographics-truth.candidates.csv",
+          [{"input_id": r["input_id"], "true_employee_count": r["employees"], "true_industry": "unknown",
+            "true_hq_country": r.get("hq_country", ""), "source_url": r.get("employees_source_url", "")} for r in sample],
+          ["input_id", "true_employee_count", "true_industry", "true_hq_country", "source_url"])
+    print("cell counts:", dict(sorted(counts.items())))
+    print("Record these in the waterfall config (disclosures.cells.counts) before freezing; map industries in the firmographic key.")
+
+
 def cmd_domains(a):
     """Company domains from the company's own homepage: name-based guesses, accepted only when the
     page title names the company. With --executives, also writes contacts ready to enrich."""
@@ -421,6 +463,10 @@ def build_parser():
         sic=dict(default=",".join(sources.TECH_SIC), help="comma-separated SIC codes"),
         company_type=dict(default="ltd", choices=["ltd", "plc"], help="plc for larger companies"),
         companies=dict(type=int, default=300), per_company=dict(type=int, default=2), seed=dict(type=int, default=2026))
+    cmd("w1-assemble", cmd_w1_assemble, "merge candidate pools into w1-input.csv, capped per size x region cell",
+        candidates=dict(required=True, help="folder with contacts / public-contacts / uk-contacts candidate files"),
+        cells=dict(default="smb/us,mid/us,ent/us,smb/emea"), cap=dict(type=int, default=400),
+        firmographic_sample=dict(type=int, default=200), seed=dict(type=int, default=2026))
     cmd("domains", cmd_domains, "company domains from the company's own homepage (title must name the company)",
         companies=dict(required=True, help="CSV with a company or name column, e.g. formd-filings.csv"),
         executives=dict(help="formd-executives.csv: also write contacts.candidates.csv for matched companies"),
