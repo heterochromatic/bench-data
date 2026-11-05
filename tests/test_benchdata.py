@@ -244,6 +244,19 @@ class BenchDataTest(unittest.TestCase):
         self.assertEqual(http._backoff("data.sec.gov", 429, 2), 120)
         self.assertEqual(http._backoff("example.org", 503, 1), 4)
 
+    def test_client_errors_not_retried_and_auth_dropped_on_redirect(self):
+        calls = []
+        http.transport = lambda url, h, t: (calls.append(url), (400, b""))[1]
+        with self.assertRaises(http.FetchError):
+            http.get("https://example.org/bad")
+        self.assertEqual(len(calls), 1)
+        import urllib.request
+        req = urllib.request.Request("https://api.example.org/doc", headers={"Authorization": "Basic x"})
+        new = http._DropAuthOnRedirect().redirect_request(req, None, 302, "Found", {}, "https://storage.example.net/f")
+        self.assertFalse(new.has_header("Authorization"))
+        same = http._DropAuthOnRedirect().redirect_request(req, None, 302, "Found", {}, "https://api.example.org/f2")
+        self.assertTrue(same.has_header("Authorization"))
+
     def test_retry_then_give_up(self):
         http.transport = lambda url, h, t: (503, b"")
         orig_sleep = http.time.sleep

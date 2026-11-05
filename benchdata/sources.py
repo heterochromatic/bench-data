@@ -240,7 +240,10 @@ def ch_headcount(number):
         meta = (item.get("links") or {}).get("document_metadata")
         if not meta:
             continue
-        doc = http.get_text(f"{meta}/content", headers={**ch_headers(), "Accept": "application/xhtml+xml"})
+        try:
+            doc = http.get_text(f"{meta}/content", headers={**ch_headers(), "Accept": "application/xhtml+xml"})
+        except http.FetchError:
+            continue   # e.g. accounts filed only as PDF
         m = AVG_EMPLOYEES.search(doc or "")
         if m:
             return int(m.group(1).replace(",", "")), meta

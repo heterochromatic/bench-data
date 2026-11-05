@@ -31,10 +31,24 @@ def now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Never forward credentials to another host (Companies House documents redirect to storage
+    that rejects them, and leaking a key to a third host is wrong anyway)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlparse(newurl).hostname != urllib.parse.urlparse(req.full_url).hostname:
+            new.remove_header("Authorization")
+        return new
+
+
+_opener = urllib.request.build_opener(_DropAuthOnRedirect)
+
+
 def _urllib_transport(url, headers, timeout):
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _opener.open(req, timeout=timeout) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         return e.code, e.read()
@@ -84,6 +98,8 @@ def get(url, params=None, headers=None, timeout=30, tries=5, cache=True):
             return None
         if status in (403, 401):
             raise FetchError(f"{status} from {host}: check the contact header or API key", status)
+        if status and 400 <= status < 500 and status != 429:
+            raise FetchError(f"{status} from {url}", status)   # a retry won't change a client error
         if attempt < tries - 1:
             time.sleep(_backoff(host, status, attempt))
     raise FetchError(f"gave up on {url} (last status {status})", status)

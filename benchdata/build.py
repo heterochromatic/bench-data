@@ -311,9 +311,13 @@ def cmd_uk_contacts(a):
         companies += page
         start += 100
     random.Random(a.seed).shuffle(companies)
-    rows = []
+    rows, failed = [], 0
     for i, c in enumerate(companies[: a.companies], 1):
-        directors = [o for o in sources.ch_officers(c["company_number"]) if o["role"] == "director" and not o["resigned_on"]]
+        try:
+            directors = [o for o in sources.ch_officers(c["company_number"]) if o["role"] == "director" and not o["resigned_on"]]
+        except http.FetchError:
+            failed += 1
+            continue
         if not directors:
             continue
         domain, status, _, _ = sources.find_domain(c["name"], tlds=sources.UK_TLDS)
@@ -330,6 +334,8 @@ def cmd_uk_contacts(a):
     cols = ["first_name", "last_name", "title", "company", "company_domain", "domain_source", "company_number", "hq_country",
             "industry", "employees", "segment_size", "segment_region", "person_source_url", "employees_source_url", "retrieved_at"]
     write(a.out, "uk-contacts.candidates.csv", rows, cols)
+    if failed:
+        print(f"{failed} companies couldn't be fetched")
     ready = [r for r in rows if r["company_domain"]]
     print(f"{len(ready)} of {len(rows)} directors have a company domain; "
           f"size cells: {dict(sorted(collections.Counter(r['segment_size'] or '?' for r in ready).items()))}")
