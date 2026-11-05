@@ -5,6 +5,7 @@ Tests replace `transport` with a fake, so nothing touches the network.
 import hashlib
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -14,13 +15,16 @@ from pathlib import Path
 
 
 class FetchError(Exception):
-    pass
+    def __init__(self, msg, status=None):
+        super().__init__(msg)
+        self.status = status
 
 
 MIN_INTERVAL = {"sec.gov": 0.15, "data.sec.gov": 0.15, "www.sec.gov": 0.15,   # SEC allows 10 requests a second
                 "wikidata.org": 1.0}
 DEFAULT_INTERVAL = 0.5
 _last = {}
+_lock = threading.Lock()
 
 
 def now():
@@ -42,11 +46,14 @@ transport = _urllib_transport
 
 
 def _pace(host):
+    """Reserve this host's next slot under a lock, so threads still respect each host's gap."""
     gap = next((v for k, v in MIN_INTERVAL.items() if host == k or host.endswith("." + k)), DEFAULT_INTERVAL)
-    wait = _last.get(host, 0) + gap - time.monotonic()
+    with _lock:
+        slot = max(time.monotonic(), _last.get(host, 0) + gap)
+        _last[host] = slot
+    wait = slot - time.monotonic()
     if wait > 0:
         time.sleep(wait)
-    _last[host] = time.monotonic()
 
 
 def get(url, params=None, headers=None, timeout=30, tries=4, cache=True):
@@ -69,9 +76,10 @@ def get(url, params=None, headers=None, timeout=30, tries=4, cache=True):
         if status == 404:
             return None
         if status in (403, 401):
-            raise FetchError(f"{status} from {host}: check the contact header or API key")
-        time.sleep(min(60, 2 ** attempt * (5 if status == 429 else 2)))
-    raise FetchError(f"gave up on {url} (last status {status})")
+            raise FetchError(f"{status} from {host}: check the contact header or API key", status)
+        if attempt < tries - 1:
+            time.sleep(min(60, 2 ** attempt * (5 if status == 429 else 2)))
+    raise FetchError(f"gave up on {url} (last status {status})", status)
 
 
 def get_json(url, **kw):

@@ -4,7 +4,9 @@ import base64
 import html as htmllib
 import os
 import re
+import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 
 from . import http
 from .sec import html_to_text
@@ -177,24 +179,38 @@ def match_score(company, names):
     return sum(t in flat for t in tokens) / len(tokens)
 
 
-def find_domain(company):
-    """Try name-based domains; accept one whose homepage names the company.
-    Returns (domain, status, page title, tried). status: match, review (partial match) or unknown."""
-    tried, best = [], (None, 0.0, "")
-    for d in domain_guesses(company):
-        tried.append(d)
+def _check(company, domain):
+    """(score, first page name) for one guessed domain; (0, "") if it doesn't answer. A site that
+    answers with a rate limit, block or server error gets one more try a second later; a domain that
+    doesn't exist doesn't, so misses stay fast."""
+    for attempt in range(2):
         try:
-            body = http.get(f"https://{d}/", headers=SITE_HEADERS, timeout=8, tries=1)
-        except http.FetchError:
-            continue
-        if not body:
-            continue
-        names = page_names(body[:200_000].decode("utf-8", "replace"))
-        score = match_score(company, names)
-        if score == 1.0:
-            return d, "match", (names or [""])[0], tried
-        if score > best[1]:
-            best = (d, score, (names or [""])[0])
+            body = http.get(f"https://{domain}/", headers=SITE_HEADERS, timeout=6, tries=1)
+            break
+        except http.FetchError as e:
+            if e.status is None or attempt:
+                return 0.0, ""
+            time.sleep(1)
+    if not body:
+        return 0.0, ""
+    names = page_names(body[:200_000].decode("utf-8", "replace"))
+    return match_score(company, names), (names or [""])[0]
+
+
+def find_domain(company, batch=4):
+    """Try name-based domains, `batch` at a time in priority order, and stop at the first batch with a
+    full match (the earliest guess in that batch wins). Returns (domain, status, page title, tried);
+    status is match, review (partial match) or unknown."""
+    guesses, tried, best = domain_guesses(company), [], (None, 0.0, "")
+    with ThreadPoolExecutor(max_workers=batch) as pool:
+        for start in range(0, len(guesses), batch):
+            chunk = guesses[start:start + batch]
+            tried += chunk
+            for d, (score, title) in zip(chunk, pool.map(lambda d: _check(company, d), chunk)):
+                if score == 1.0:
+                    return d, "match", title, tried
+                if score > best[1]:
+                    best = (d, score, title)
     if best[0] and best[1] >= 0.5:
         return best[0], "review", best[2], tried
     return "", "unknown", "", tried

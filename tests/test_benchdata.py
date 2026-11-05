@@ -170,6 +170,33 @@ class BenchDataTest(unittest.TestCase):
         self.assertEqual([o["resigned_on"] for o in officers], ["", "2026-07-31"])
         self.assertTrue(self.fake.calls[-1][1]["Authorization"].startswith("Basic "))
 
+    def test_pacing_holds_across_threads(self):
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        http.MIN_INTERVAL["slow.example"] = 0.05
+        t0 = time.monotonic()
+        with ThreadPoolExecutor(4) as pool:
+            list(pool.map(lambda _: http._pace("slow.example"), range(4)))
+        self.assertGreaterEqual(time.monotonic() - t0, 0.14)   # 4 calls, 3 gaps of 0.05 s
+
+    def test_domain_guess_retries_once_on_block(self):
+        calls = []
+
+        def flaky(url, h, t):
+            calls.append(url)
+            if url == "https://flakyco.com/" and calls.count(url) == 1:
+                return 429, b""
+            if url == "https://flakyco.com/":
+                return 200, b"<title>FlakyCo | Home</title>"
+            return None, b"nodename nor servname provided"
+        http.transport = flaky
+        orig_sleep = sources.time.sleep
+        sources.time.sleep = lambda s: None
+        try:
+            self.assertEqual(sources.find_domain("FlakyCo Inc")[:2], ("flakyco.com", "match"))
+        finally:
+            sources.time.sleep = orig_sleep
+
     def test_retry_then_give_up(self):
         http.transport = lambda url, h, t: (503, b"")
         orig_sleep = http.time.sleep

@@ -11,3 +11,4 @@
 
 - First live runs. Form D skips investment funds by default; Wikidata paced and failure-tolerant; `firmographics` reads `formd-filings.csv`.
 - New `domains` command: company domains from the company's own homepage (title must name the company), plus `contacts.candidates.csv` ready to enrich.
+- Domain finder in parallel (4 guesses per company, 8 companies at once; `--workers`): 20 companies in ~7 s instead of ~2.5 min, same results. Thread-safe per-host pacing; one retry when a site answers 403/429/5xx; no wasted wait after a final failed attempt; `FetchError.status`.

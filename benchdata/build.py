@@ -8,6 +8,7 @@ import argparse
 import csv
 import random
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -216,10 +217,12 @@ def cmd_events(a):
 def cmd_domains(a):
     """Company domains from the company's own homepage: name-based guesses, accepted only when the
     page title names the company. With --executives, also writes contacts ready to enrich."""
-    out, companies = [], read(a.companies)
-    for i, c in enumerate(companies, 1):
-        name = c.get("company") or c.get("name") or ""
-        domain, status, title, tried = sources.find_domain(name)
+    companies = read(a.companies)
+    names = [c.get("company") or c.get("name") or "" for c in companies]
+    with ThreadPoolExecutor(max_workers=a.workers) as pool:
+        results = list(pool.map(sources.find_domain, names))
+    out = []
+    for i, (c, name, (domain, status, title, tried)) in enumerate(zip(companies, names, results), 1):
         out.append({"company": name, "cik": c.get("issuer_cik") or c.get("cik", ""), "domain": domain, "status": status,
                     "page_title": title, "tried": ";".join(tried), "source_url": f"https://{domain}/" if domain else "",
                     "retrieved_at": http.now()})
@@ -286,7 +289,8 @@ def build_parser():
         ciks=dict(required=True), since=dict(type=day, required=True), until=dict(type=day, required=True))
     cmd("domains", cmd_domains, "company domains from the company's own homepage (title must name the company)",
         companies=dict(required=True, help="CSV with a company or name column, e.g. formd-filings.csv"),
-        executives=dict(help="formd-executives.csv: also write contacts.candidates.csv for matched companies"))
+        executives=dict(help="formd-executives.csv: also write contacts.candidates.csv for matched companies"),
+        workers=dict(type=int, default=8, help="companies checked at the same time (each tries 4 guesses at once)"))
     cmd("uk", cmd_uk, "Companies House profiles and officers", numbers=dict(required=True, help="CSV with company_number"))
     return p
 

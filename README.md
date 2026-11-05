@@ -51,7 +51,7 @@ Then review every row marked `unknown`, and every row where the seed company fil
 - **Random, not alphabetical:** index files are sorted by company name, so commands sample filings in a fixed random order (`--seed`).
 - **Unknown, not guessed:** a value without first-hand evidence is written as `unknown`. For example, an officer with no Form 3/4 in the last 270 days is unknown, not unchanged.
 - **Job boards:** "none" means no public board was found or no ad mentions Salesforce. That's unknown, not "doesn't use Salesforce".
-- **Domains:** guessed from the company name (`.com`, `.ai`, `.io`, `.co`), and accepted only when the homepage's title or site name contains every word of the company name. Parked "for sale" pages are rejected. A partial match is marked `review`, nothing found is `unknown`. First live run: 12 of 20 matched, 3 to review, 5 unknown, in about 2.5 minutes (failed guesses wait for their timeout).
+- **Domains:** guessed from the company name (`.com`, `.ai`, `.io`, `.co`), and accepted only when the homepage's title or site name contains every word of the company name. Parked "for sale" pages are rejected. A partial match is marked `review`, nothing found is `unknown`. Guesses are checked 4 at a time per company and 8 companies at a time (`--workers`), with per-host pacing kept; a site that answers with a rate limit or error gets one retry. First live run: 12 of 20 matched, 3 to review, 5 unknown, in about 7 seconds (2.5 minutes before parallelizing).
 - **Press contacts:** generic inboxes (`ir@`, `press@`, ...) are dropped, and each row says whether the email is on the company's own domain. Agency contacts drop out under the benchmarks' domain check.
 
 ## Limits
