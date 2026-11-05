@@ -139,6 +139,11 @@ class BenchDataTest(unittest.TestCase):
         self.assertEqual(emails["maria.chen@acme.example.com"]["name"], "Maria Chen")
         self.assertEqual(emails["maria.chen@acme.example.com"]["on_domain"], "True")
         self.assertEqual(emails["tom@prfirm.example.net"]["on_domain"], "False")
+        self.assertEqual(sec.contacts_from_text("Media Contact: Amazon Investor Relations, jane@amazon.example.com")[0][0], "")
+        self.assertEqual(sec.contacts_from_text("Contact: 100 Kinney Avenue, Suite 5, bob@acme.example.com")[0][0], "")
+        self.assertEqual(sec.contacts_from_text("Contact: Berry Senior, kris.newton@acme.example.com")[0][0], "Kris Newton")
+        self.assertEqual(sec.name_from_email("jsmith@acme.example.com"), "")
+        self.assertEqual(sec.contacts_from_text("Contact: investor.relations@acme.example.com")[0][0], "")
 
     def test_jobs_salesforce_and_sdr(self):
         companies = self.csv_of("companies.csv", [["acme.example.com", "Acme"]], ["domain", "name"])
@@ -211,18 +216,22 @@ class BenchDataTest(unittest.TestCase):
         with open(c / "contacts.candidates.csv", "w", newline="") as f:
             w = csv.writer(f); w.writerow(cols)
             w.writerows([[f"F{i}", "L", "Co", f"d{i}.example.com", "u", "u"] for i in range(5)] + [["F0", "L", "Co", "d0.example.com", "u", "u"]])
-        pcols = ["first_name", "last_name", "company", "company_domain", "employees", "segment_size", "segment_region", "hq_country", "employees_source_url"]
+        pcols = ["first_name", "last_name", "company", "company_domain", "employees", "segment_size", "segment_region", "hq_country", "employees_source_url", "cik"]
         with open(c / "public-contacts.candidates.csv", "w", newline="") as f:
             w = csv.writer(f); w.writerow(pcols)
-            w.writerows([["A", "B", "Big", "big.example.com", "5000", "ent", "us", "US", "k"], ["C", "D", "Nod", "", "", "", "", "", ""],
-                         ["E", "F", "Apac", "ap.example.com", "900", "mid", "apac", "JP", "k"]])
+            w.writerows([["A", "B", "Big", "big.example.com", "5000", "ent", "us", "US", "k", "1"], ["C", "D", "Nod", "", "", "", "", "", "", "2"],
+                         ["E", "F", "Apac", "ap.example.com", "900", "mid", "apac", "JP", "k", "3"]])
+        with open(c / "press-contacts.candidates.csv", "w", newline="") as f:
+            w = csv.writer(f); w.writerow(["cik", "name", "email", "on_domain", "source_url"])
+            w.writerow(["1", "Gina Gold", "gina.gold@big.example.com", "True", "https://sec.example/ex99"])
         build.main(["w1-assemble", "--out", str(self.out), "--candidates", str(c), "--cap", "3"])
         rows = read(self.out / "w1-input.csv")
         cells = collections.Counter(f"{r['segment_size']}/{r['segment_region']}" for r in rows)
-        self.assertEqual(dict(cells), {"smb/us": 3, "ent/us": 1})   # capped, no APAC, no domainless row, F0 once
-        self.assertEqual(sorted(r["input_id"] for r in rows), ["W0001", "W0002", "W0003", "W0004"])
-        [k] = read(self.out / "w1-firmographics-truth.candidates.csv")
-        self.assertEqual((k["true_employee_count"], k["true_hq_country"]), ("5000", "US"))
+        self.assertEqual(dict(cells), {"smb/us": 3, "ent/us": 2})   # capped, no APAC, no domainless row, F0 once, gold kept
+        [g] = read(self.out / "w1-email-gold.candidates.csv")
+        self.assertEqual((g["input_id"], g["known_email"]), ("W0001", "gina.gold@big.example.com"))
+        gold_row = next(r for r in rows if r["input_id"] == "W0001")
+        self.assertEqual((gold_row["first_name"], gold_row["company_domain"], gold_row["segment_size"]), ("Gina", "big.example.com", "ent"))
 
     def test_companies_house(self):
         nums = self.csv_of("uk.csv", [["09999999"]], ["company_number"])

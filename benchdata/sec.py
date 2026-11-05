@@ -252,6 +252,17 @@ GENERIC = re.compile(r"^(info|ir|investor|investors|press|media|pr|news|contact|
 NAME_BEFORE = re.compile(r"([A-Z][a-z]+(?: [A-Z]\.)? [A-Z][A-Za-z'-]+)[,\s]+(?:[A-Z][^@]{0,60}?)?$")
 
 
+# Words that mean the captured "name" is a team, a place or a company, not a person.
+NOT_A_PERSON = re.compile(r"\b(investor|investors|relations|media|press|pr|communications|corporate|department|team|group|office|strategic|"
+                          r"avenue|street|road|drive|boulevard|suite|floor|plaza|inc|corp|llc|ltd|company|holdings|partners)\b", re.I)
+
+
+def name_from_email(email):
+    """'maria.chen@acme.com' -> 'Maria Chen' when the local part is two alphabetic words; else ''."""
+    parts = re.split(r"[._-]", email.split("@")[0])
+    return " ".join(w.title() for w in parts) if len(parts) == 2 and all(w.isalpha() and len(w) > 1 for w in parts) else ""
+
+
 def contacts_from_text(text):
     """Named personal emails near a 'Contact' heading: (name, email, snippet). Generic inboxes are dropped."""
     out = []
@@ -263,7 +274,13 @@ def contacts_from_text(text):
         if "contact" not in before.lower():
             continue
         nm = NAME_BEFORE.search(before.strip())
-        out.append((nm.group(1) if nm else "", email, (before[-100:] + email).strip()))
+        name = nm.group(1) if nm and not NOT_A_PERSON.search(nm.group(1)) else ""
+        # The address itself is the stronger evidence: prefer first.last@ when the text's name disagrees.
+        from_email = name_from_email(email)
+        from_email = "" if NOT_A_PERSON.search(from_email) else from_email
+        if from_email and (not name or set(name.lower().split()) != set(from_email.lower().split())):
+            name = from_email
+        out.append((name, email, (before[-100:] + email).strip()))
     return out
 
 

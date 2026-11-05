@@ -186,14 +186,21 @@ def cmd_jobs(a):
 
 def cmd_press_contacts(a):
     """Named personal emails in 8-K press-release exhibits: known-email (gold) candidates."""
-    out, ciks = [], [r.get("cik") or r["issuer_cik"] for r in read(a.ciks)]   # also reads formd-filings.csv
+    # The input may carry each company's domain (e.g. from public-contacts): SEC records rarely have one.
+    out, inputs = [], read(a.ciks)
+    ciks = [r.get("cik") or r["issuer_cik"] for r in inputs]   # also reads formd-filings.csv
+    known_domain = {(r.get("cik") or r.get("issuer_cik", "")).lstrip("0"): (r.get("company_domain") or "").lower() for r in inputs}
     for i, cik in enumerate(ciks, 1):
         sub = sec.submissions(cik) or {}
-        site = sources.domain_of(sec.company_facts(sub)["website"]) if sub else ""
+        site = known_domain.get(cik.lstrip("0")) or (sources.domain_of(sec.company_facts(sub)["website"]) if sub else "")
+        company = sub.get("name", "")
         for f in [f for f in sec.recent_filings(sub) if f["form"] == "8-K" and f["date"] >= a.since.isoformat()][: a.per_company]:
             for c in sec.press_contacts(cik, f["accession"]):
-                c.update(cik=cik, company=sub.get("name", ""), company_domain=site, filed=f["date"],
-                         on_domain=bool(site) and c["email"].lower().endswith("@" + site), retrieved_at=http.now())
+                if c["name"] and set(sources.name_tokens(c["name"])) <= set(sources.name_tokens(company)):
+                    c["name"] = ""   # the "name" was the company's own name, not a person
+                email_dom = c["email"].lower().rpartition("@")[2]
+                c.update(cik=cik, company=company, company_domain=site, filed=f["date"],
+                         on_domain=bool(site) and (email_dom == site or email_dom.endswith("." + site)), retrieved_at=http.now())
                 out.append(c)
         progress(i, len(ciks))
     write(a.out, "press-contacts.candidates.csv", out, ["cik", "company", "company_domain", "name", "email", "on_domain",
@@ -352,8 +359,23 @@ def cmd_w1_assemble(a):
     for name, src in (("public-contacts.candidates.csv", "sec-filer"), ("uk-contacts.candidates.csv", "companies-house")):
         if (d / name).exists():
             pools += [{**r, "size_basis": "headcount" if r.get("employees") else "", "source": src} for r in read(d / name)]
+    # Gold people (named, on-domain press contacts) go first so the cap never drops them; their cell is
+    # their company's, from the SEC-filer pool.
+    gold = []
+    if (d / "press-contacts.candidates.csv").exists() and (d / "public-contacts.candidates.csv").exists():
+        cell_of = {}
+        for r in read(d / "public-contacts.candidates.csv"):
+            cell_of.setdefault(r["cik"].lstrip("0"), r)
+        for r in read(d / "press-contacts.candidates.csv"):
+            co = cell_of.get(r["cik"].lstrip("0"))
+            if r["on_domain"] == "True" and r["name"] and co and len(r["name"].split()) >= 2:
+                first, last = r["name"].split()[0], r["name"].split()[-1]
+                gold.append({"first_name": first, "last_name": last, "company": co["company"], "company_domain": co["company_domain"],
+                             "segment_size": co["segment_size"], "segment_region": co["segment_region"], "employees": co["employees"],
+                             "hq_country": co["hq_country"], "size_basis": "headcount" if co["employees"] else "", "source": "press-release (gold)",
+                             "known_email": r["email"], "person_source_url": r["source_url"], "employees_source_url": co["employees_source_url"]})
     seen, rows = set(), []
-    for r in pools:
+    for r in gold + pools:
         key = (r["first_name"].lower(), r["last_name"].lower(), (r["company_domain"] or "").lower())
         cell = f"{r.get('segment_size')}/{r.get('segment_region')}"
         if not all(key) or key in seen or cell not in a.cells.split(","):
@@ -361,7 +383,10 @@ def cmd_w1_assemble(a):
         seen.add(key)
         rows.append({**r, "cell": cell})
     rng = random.Random(a.seed)
-    rng.shuffle(rows)
+    head = [r for r in rows if r.get("known_email")]
+    rest = [r for r in rows if not r.get("known_email")]
+    rng.shuffle(rest)
+    rows = head + rest
     counts, picked = collections.Counter(), []
     for r in rows:
         if counts[r["cell"]] < a.cap:
@@ -373,6 +398,9 @@ def cmd_w1_assemble(a):
     write(a.out, "w1-input-sources.csv", picked, ["input_id", "company", "company_domain", "cell", "size_basis", "employees",
                                                   "hq_country", "source", "person_source_url", "domain_source_url",
                                                   "domain_source", "employees_source_url"])
+    write(a.out, "w1-email-gold.candidates.csv",
+          [{"input_id": r["input_id"], "known_email": r["known_email"], "known_phone": "", "source_url": r["person_source_url"]}
+           for r in picked if r.get("known_email")], ["input_id", "known_email", "known_phone", "source_url"])
     sized = [r for r in picked if r.get("employees")]
     sample = rng.sample(sized, min(a.firmographic_sample, len(sized)))
     write(a.out, "w1-firmographics-truth.candidates.csv",
