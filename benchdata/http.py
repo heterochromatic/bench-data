@@ -17,7 +17,8 @@ class FetchError(Exception):
     pass
 
 
-MIN_INTERVAL = {"sec.gov": 0.15, "data.sec.gov": 0.15, "www.sec.gov": 0.15}   # SEC allows 10 requests a second
+MIN_INTERVAL = {"sec.gov": 0.15, "data.sec.gov": 0.15, "www.sec.gov": 0.15,   # SEC allows 10 requests a second
+                "wikidata.org": 1.0}
 DEFAULT_INTERVAL = 0.5
 _last = {}
 
@@ -69,7 +70,7 @@ def get(url, params=None, headers=None, timeout=30, tries=4, cache=True):
             return None
         if status in (403, 401):
             raise FetchError(f"{status} from {host}: check the contact header or API key")
-        time.sleep(min(60, 2 ** attempt * 2))
+        time.sleep(min(60, 2 ** attempt * (5 if status == 429 else 2)))
     raise FetchError(f"gave up on {url} (last status {status})")
 
 

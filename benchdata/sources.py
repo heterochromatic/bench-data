@@ -71,7 +71,8 @@ def sdr_openings(jobs):
 # --- Wikidata ------------------------------------------------------------------------------------
 
 WD_API = "https://www.wikidata.org/w/api.php"
-WD_HEADERS = {"User-Agent": "TPC benchmark research (bench-data)"}
+# Wikimedia asks for a descriptive agent with a contact URL.
+WD_HEADERS = {"User-Agent": "bench-data/0.1 (The Prompting Company benchmark research; https://promptingcompany.com)"}
 
 
 def wikidata_websites(name, limit=3):

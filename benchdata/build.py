@@ -54,14 +54,25 @@ def progress(i, n, every=25):
 
 # --- Commands ------------------------------------------------------------------------------------
 
+# Form D industry groups that are investment vehicles, not operating companies anyone sells to.
+FUND_GROUPS = {"Pooled Investment Fund", "Investing", "REITS and Finance", "Other Real Estate", "Commercial", "Residential",
+               "Other Banking and Financial Services"}
+
+
 def cmd_formd(a):
-    """Private US funding rounds and their executives: T1/W1 contacts, T2 funding reference."""
-    filings, people = [], []
-    idx = sample(sec.index({"D"}, a.since, a.until), a.seed)[: a.limit]
+    """Private US funding rounds and their executives: T1/W1 contacts, T2 funding reference.
+    Investment funds and real-estate vehicles are skipped unless --include-funds."""
+    filings, people, skipped = [], [], 0
+    idx = sample(sec.index({"D"}, a.since, a.until), a.seed)
     for i, r in enumerate(idx, 1):
+        if len(filings) >= a.limit:
+            break
         filing, persons, url = sec.form_d(r["cik"], r["accession"])
-        progress(i, len(idx))
+        progress(len(filings), a.limit)
         if not filing:
+            continue
+        if not a.include_funds and filing["industry_group"] in FUND_GROUPS:
+            skipped += 1
             continue
         base = {**filing, "issuer_cik": r["cik"], "filed": r["date"], "hq_country": country(filing["state_or_country"]),
                 "source_url": url, "retrieved_at": http.now()}
@@ -71,6 +82,8 @@ def cmd_formd(a):
             "source_url", "retrieved_at"]
     write(a.out, "formd-filings.csv", filings, cols)
     write(a.out, "formd-executives.csv", people, ["first_name", "last_name", "relationship", *cols])
+    if skipped:
+        print(f"skipped {skipped} investment-fund or real-estate filings")
 
 
 def cmd_officers(a):
@@ -122,7 +135,7 @@ def cmd_officers_truth(a):
 
 def cmd_firmographics(a):
     """Website, industry, HQ country and 10-K headcount for SEC filers: W1 and T5 keys."""
-    out, ciks = [], [r["cik"] for r in read(a.ciks)]
+    out, ciks = [], [r.get("cik") or r["issuer_cik"] for r in read(a.ciks)]   # also reads formd-filings.csv
     for i, cik in enumerate(ciks, 1):
         sub = sec.submissions(cik)
         if not sub:
@@ -130,9 +143,12 @@ def cmd_firmographics(a):
         f = sec.company_facts(sub)
         site_src = "sec" if f["website"] else ""
         if not f["website"] and a.wikidata:
-            hits = sources.wikidata_websites(f["name"])
+            try:
+                hits = sources.wikidata_websites(f["name"])
+            except http.FetchError as e:
+                hits, site_src = [], f"wikidata failed: {e}"[:120]
             if hits:
-                f["website"], site_src = hits[0][2], f"wikidata {hits[0][0]}"
+                f["website"], site_src = hits[0][2], f"wikidata {hits[0][0]} (check it's the same company)"
         n, snippet, url = sec.latest_10k_headcount(cik, sub) if a.headcount else (None, "", "")
         out.append({"cik": cik, **f, "domain": sources.domain_of(f["website"]) if f["website"] else "",
                     "website_source": site_src, "employees": n if n is not None else "unknown",
@@ -162,7 +178,7 @@ def cmd_jobs(a):
 
 def cmd_press_contacts(a):
     """Named personal emails in 8-K press-release exhibits: known-email (gold) candidates."""
-    out, ciks = [], [r["cik"] for r in read(a.ciks)]
+    out, ciks = [], [r.get("cik") or r["issuer_cik"] for r in read(a.ciks)]   # also reads formd-filings.csv
     for i, cik in enumerate(ciks, 1):
         sub = sec.submissions(cik) or {}
         site = sources.domain_of(sec.company_facts(sub)["website"]) if sub else ""
@@ -226,14 +242,14 @@ def build_parser():
 
     cmd("formd", cmd_formd, "private funding rounds and their executives (Form D)",
         since=dict(type=day, required=True), until=dict(type=day, required=True), limit=dict(type=int, default=300),
-        seed=dict(type=int, default=2026))
+        seed=dict(type=int, default=2026), include_funds=dict(action="store_true"))
     cmd("officers", cmd_officers, "officers as of a past window (Forms 3/4): the T3 seed",
         since=dict(type=day, required=True), until=dict(type=day, required=True), limit=dict(type=int, default=500),
         seed=dict(type=int, default=2026))
     cmd("officers-truth", cmd_officers_truth, "current role of each seed officer: T3 key candidates",
         seed=dict(required=True), recent_days=dict(type=int, default=270))
     cmd("firmographics", cmd_firmographics, "website, industry, HQ country, 10-K headcount for SEC filers",
-        ciks=dict(required=True, help="CSV with a cik column"), wikidata=dict(action="store_true"),
+        ciks=dict(required=True, help="CSV with a cik (or issuer_cik) column, e.g. formd-filings.csv"), wikidata=dict(action="store_true"),
         headcount=dict(action="store_true"))
     cmd("jobs", cmd_jobs, "public job boards: Salesforce evidence and SDR openings",
         companies=dict(required=True, help="CSV with domain (and optional name) columns"))

@@ -22,6 +22,7 @@ ROUTES = [  # (substring of URL, fixture file); first match wins
     ("/2000002/000100000125000004/form4-2025.xml", "form4-2025.xml"),
     ("/2000002/000400000426000077/form4-2026.xml", "form4-2026.xml"),
     ("/3000003/000300000326000001/primary_doc.xml", "formd.xml"),
+    ("/5000005/000500000526000001/primary_doc.xml", "formd-fund.xml"),
     ("CIK0001000001.json", "sub-acme.json"), ("CIK0002000002.json", "sub-jane.json"),
     ("/1000001/000100000126000210/acme-10k.htm", "acme-10k.htm"),
     ("/1000001/000100000126000805/index.json", "index-8k.json"),
@@ -88,7 +89,7 @@ class BenchDataTest(unittest.TestCase):
         rows = sec.parse_form_index((FIX / "form.idx").read_text())
         self.assertEqual(rows[0], {"form": "4", "company": "ACME SOFTWARE INC", "cik": "1000001", "date": "2025-06-10",
                                    "accession": "0001000001-25-000004"})
-        self.assertEqual(len(build.sample(rows, 1)), 3)   # the two Form 4 lines are one filing
+        self.assertEqual(len(build.sample(rows, 1)), 4)   # the two Form 4 lines are one filing
 
     def test_formd_executives_only(self):
         build.main(["formd", "--out", str(self.out), "--since", "2026-04-01", "--until", "2026-06-30"])
@@ -98,6 +99,8 @@ class BenchDataTest(unittest.TestCase):
         people = read(self.out / "formd-executives.csv")
         self.assertEqual([(p["first_name"], p["last_name"]) for p in people], [("Ana", "Lopez")])
         self.assertTrue(people[0]["source_url"].endswith("primary_doc.xml"))
+        build.main(["formd", "--out", str(self.out), "--since", "2026-04-01", "--until", "2026-06-30", "--include-funds"])
+        self.assertEqual(len(read(self.out / "formd-filings.csv")), 2)
 
     def test_officers_seed_and_truth(self):
         build.main(["officers", "--out", str(self.out), "--since", "2025-06-01", "--until", "2025-06-30"])

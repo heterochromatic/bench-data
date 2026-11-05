@@ -7,3 +7,4 @@ Form Type   Company Name                                                  CIK   
 4           SMITH JANE                                                    2000002     2025-06-10  edgar/data/2000002/0001000001-25-000004.txt
 8-K         ACME SOFTWARE INC                                             1000001     2026-06-15  edgar/data/1000001/0001000001-26-000805.txt
 D           BETA LABS INC                                                 3000003     2026-06-20  edgar/data/3000003/0003000003-26-000001.txt
+D           ALPHA GROWTH FUND LP                                          5000005     2026-06-21  edgar/data/5000005/0005000005-26-000001.txt
