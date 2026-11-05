@@ -137,7 +137,7 @@ def ch_officers(number):
 LEGAL = {"inc", "incorporated", "corp", "corporation", "co", "company", "llc", "ltd", "limited", "lp", "llp", "plc",
          "pbc", "holdings", "holding", "the", "and", "of"}
 TLDS = (".com", ".ai", ".io", ".co")
-PARKED = re.compile(r"domain (is )?for sale|buy this domain|parked|hugedomains|godaddy|sedo|dan\.com|this domain|coming soon", re.I)
+PARKED = re.compile(r"\bfor sale\b|buy this domain|parked|hugedomains|godaddy|sedo|dan\.com|spaceship\.com|afternic|this domain|coming soon", re.I)
 TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 SITE_NAME = re.compile(r'<meta[^>]+property=["\']og:site_name["\'][^>]+content=["\']([^"\']+)', re.I)
 SITE_HEADERS = {"User-Agent": "bench-data/0.1 (+https://promptingcompany.com)"}
