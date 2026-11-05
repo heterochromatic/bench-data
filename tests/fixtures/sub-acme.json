@@ -1,0 +1,5 @@
+{"name": "Acme Software Inc", "sic": "7372", "sicDescription": "Services-Prepackaged Software", "website": "https://www.acme.example.com",
+ "addresses": {"business": {"stateOrCountry": "CA"}},
+ "filings": {"recent": {"form": ["8-K", "10-K", "4"], "filingDate": ["2026-06-15", "2026-02-20", "2025-06-10"],
+   "accessionNumber": ["0001000001-26-000805", "0001000001-26-000210", "0001000001-25-000004"],
+   "primaryDocument": ["acme-8k.htm", "acme-10k.htm", "xslF345X05/form4-2025.xml"], "items": ["5.02,9.01", "", ""]}}}

@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<ownershipDocument>
+  <periodOfReport>2025-06-06</periodOfReport>
+  <issuer><issuerCik>0001000001</issuerCik><issuerName>Acme Software Inc</issuerName></issuer>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerCik>0002000002</rptOwnerCik><rptOwnerName>Smith Jane</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship><isOfficer>1</isOfficer><officerTitle>Chief Marketing Officer</officerTitle></reportingOwnerRelationship>
+  </reportingOwner>
+</ownershipDocument>

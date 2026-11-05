@@ -1,0 +1,254 @@
+"""`python3 -m benchdata <command>`: write candidate inputs and answer keys as CSV.
+
+Every row has source_url and retrieved_at. Files ending in `.candidates.csv` are not answer keys yet:
+review disagreements, spot-check 20 rows, then copy the reviewed rows to the key file named in the
+bench's ANSWER-KEYS.md.
+"""
+import argparse
+import csv
+import random
+import sys
+from datetime import date, timedelta
+from pathlib import Path
+
+from . import http, sec, sources
+
+
+def write(out_dir, name, rows, columns):
+    p = Path(out_dir) / name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    print(f"{p}: {len(rows)} rows")
+    return p
+
+
+def read(path):
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        return list(csv.DictReader(f))
+
+
+def country(code):
+    code = (code or "").upper()
+    return "US" if code in sec.US_STATES else sec.EDGAR_COUNTRY.get(code, "")
+
+
+def sample(rows, seed):
+    """One row per filing, in a fixed random order: index files are sorted by company name, so taking
+    the first N would favour names starting with A."""
+    seen, out = set(), []
+    for r in rows:
+        if r["accession"] not in seen:
+            seen.add(r["accession"])
+            out.append(r)
+    random.Random(seed).shuffle(out)
+    return out
+
+
+def progress(i, n, every=25):
+    if i % every == 0 or i == n:
+        print(f"  {i}/{n}", file=sys.stderr, flush=True)
+
+
+# --- Commands ------------------------------------------------------------------------------------
+
+def cmd_formd(a):
+    """Private US funding rounds and their executives: T1/W1 contacts, T2 funding reference."""
+    filings, people = [], []
+    idx = sample(sec.index({"D"}, a.since, a.until), a.seed)[: a.limit]
+    for i, r in enumerate(idx, 1):
+        filing, persons, url = sec.form_d(r["cik"], r["accession"])
+        progress(i, len(idx))
+        if not filing:
+            continue
+        base = {**filing, "issuer_cik": r["cik"], "filed": r["date"], "hq_country": country(filing["state_or_country"]),
+                "source_url": url, "retrieved_at": http.now()}
+        filings.append(base)
+        people += [{**base, **p} for p in persons if "Executive Officer" in p["relationship"]]
+    cols = ["company", "issuer_cik", "hq_country", "industry_group", "total_offering", "total_sold", "first_sale", "filed",
+            "source_url", "retrieved_at"]
+    write(a.out, "formd-filings.csv", filings, cols)
+    write(a.out, "formd-executives.csv", people, ["first_name", "last_name", "relationship", *cols])
+
+
+def cmd_officers(a):
+    """Officers as of a past window (Forms 3/4): the T3 seed, as stored in a stale CRM."""
+    seen, rows = set(), []
+    idx = sample(sec.index({"3", "4"}, a.since, a.until), a.seed)
+    for i, r in enumerate(idx, 1):
+        if len(rows) >= a.limit:
+            break
+        people, url = sec.ownership(r["cik"], r["accession"])
+        for p in people:
+            key = (p["owner_cik"], p["issuer_cik"])
+            if p["is_officer"] and p["officer_title"] and key not in seen:
+                seen.add(key)
+                rows.append({"record_id": f"S{len(rows) + 1:04d}", "owner_cik": p["owner_cik"], "name": p["owner_name"],
+                             "jobtitle": p["officer_title"], "company": p["issuer_name"], "issuer_cik": p["issuer_cik"],
+                             "as_of": r["date"], "source_url": url, "retrieved_at": http.now()})
+        progress(i, len(idx), every=100)
+    write(a.out, "officers-seed.csv", rows, ["record_id", "owner_cik", "name", "jobtitle", "company", "issuer_cik", "as_of",
+                                            "source_url", "retrieved_at"])
+    write(a.out, "t3-seed-export.candidates.csv", [{**r, "bm_job_changed": ""} for r in rows],
+          ["record_id", "jobtitle", "company", "bm_job_changed"])
+
+
+def cmd_officers_truth(a):
+    """Current role of each seed officer from their latest Form 3/4, plus the issuer's 8-K Item 5.02s."""
+    cutoff = (date.today() - timedelta(days=a.recent_days)).isoformat()
+    out, seed = [], read(a.seed)
+    for i, s in enumerate(seed, 1):
+        filings = [f for f in sec.recent_filings(sec.submissions(s["owner_cik"]) or {}) if f["form"] in ("3", "4")]
+        latest = next(iter(filings), None)
+        row = {"record_id": s["record_id"], "true_title": "unknown", "true_company": "unknown", "changed": "unknown",
+               "latest_filing": "", "evidence_url": "", "officer_changes_at_seed_company": "", "retrieved_at": http.now()}
+        if latest:
+            people, url = sec.ownership(s["owner_cik"], latest["accession"], latest["doc"])
+            me = next((p for p in people if p["owner_cik"].lstrip("0") == s["owner_cik"].lstrip("0")), None)
+            row.update(latest_filing=latest["date"], evidence_url=url)
+            if me and latest["date"] >= cutoff:
+                row.update(true_title=me["officer_title"] or "unknown", true_company=me["issuer_name"],
+                           changed="Y" if me["issuer_cik"].lstrip("0") != s["issuer_cik"].lstrip("0") else "N")
+        changes = sec.officer_changes(sec.submissions(s["issuer_cik"]) or {}, since=s["as_of"])
+        row["officer_changes_at_seed_company"] = ";".join(f"{c['date']} {sec.archive_url(s['issuer_cik'], c['accession'], c['doc'])}" for c in changes)
+        out.append(row)
+        progress(i, len(seed))
+    write(a.out, "t3-ground-truth.candidates.csv", out, ["record_id", "true_title", "true_company", "changed", "latest_filing",
+                                                       "evidence_url", "officer_changes_at_seed_company", "retrieved_at"])
+    print("Review: rows marked unknown, and any row with officer changes at the seed company but changed = N.")
+
+
+def cmd_firmographics(a):
+    """Website, industry, HQ country and 10-K headcount for SEC filers: W1 and T5 keys."""
+    out, ciks = [], [r["cik"] for r in read(a.ciks)]
+    for i, cik in enumerate(ciks, 1):
+        sub = sec.submissions(cik)
+        if not sub:
+            continue
+        f = sec.company_facts(sub)
+        site_src = "sec" if f["website"] else ""
+        if not f["website"] and a.wikidata:
+            hits = sources.wikidata_websites(f["name"])
+            if hits:
+                f["website"], site_src = hits[0][2], f"wikidata {hits[0][0]}"
+        n, snippet, url = sec.latest_10k_headcount(cik, sub) if a.headcount else (None, "", "")
+        out.append({"cik": cik, **f, "domain": sources.domain_of(f["website"]) if f["website"] else "",
+                    "website_source": site_src, "employees": n if n is not None else "unknown",
+                    "employees_snippet": snippet, "employees_source_url": url,
+                    "source_url": f"{sec.DATA}/submissions/CIK{int(cik):010d}.json", "retrieved_at": http.now()})
+        progress(i, len(ciks))
+    write(a.out, "firmographics.candidates.csv", out, ["cik", "name", "domain", "website", "website_source", "sic",
+                                                      "sic_description", "hq_country", "hq_code", "employees",
+                                                      "employees_snippet", "employees_source_url", "source_url", "retrieved_at"])
+
+
+def cmd_jobs(a):
+    """Public job boards: Salesforce evidence (T5) and open SDR/BDR roles (T2 review reference)."""
+    out, companies = [], read(a.companies)
+    for i, c in enumerate(companies, 1):
+        board, slug, jobs = sources.find_board(c["domain"], c.get("name", ""))
+        strength, url, snippet = sources.salesforce_evidence(jobs)
+        sdrs = sources.sdr_openings(jobs)
+        out.append({"domain": c["domain"], "board": board or "", "slug": slug or "", "jobs": len(jobs),
+                    "salesforce_evidence": strength or "none", "salesforce_evidence_url": url, "salesforce_snippet": snippet,
+                    "sdr_openings": len(sdrs), "sdr_urls": ";".join(u for _, u, _ in sdrs[:5]), "retrieved_at": http.now()})
+        progress(i, len(companies))
+    write(a.out, "job-evidence.csv", out, ["domain", "board", "slug", "jobs", "salesforce_evidence", "salesforce_evidence_url",
+                                          "salesforce_snippet", "sdr_openings", "sdr_urls", "retrieved_at"])
+    print("'none' means no public board was found or no ad mentions Salesforce: that's unknown, not N.")
+
+
+def cmd_press_contacts(a):
+    """Named personal emails in 8-K press-release exhibits: known-email (gold) candidates."""
+    out, ciks = [], [r["cik"] for r in read(a.ciks)]
+    for i, cik in enumerate(ciks, 1):
+        sub = sec.submissions(cik) or {}
+        site = sources.domain_of(sec.company_facts(sub)["website"]) if sub else ""
+        for f in [f for f in sec.recent_filings(sub) if f["form"] == "8-K" and f["date"] >= a.since.isoformat()][: a.per_company]:
+            for c in sec.press_contacts(cik, f["accession"]):
+                c.update(cik=cik, company=sub.get("name", ""), company_domain=site, filed=f["date"],
+                         on_domain=bool(site) and c["email"].lower().endswith("@" + site), retrieved_at=http.now())
+                out.append(c)
+        progress(i, len(ciks))
+    write(a.out, "press-contacts.candidates.csv", out, ["cik", "company", "company_domain", "name", "email", "on_domain",
+                                                       "filed", "snippet", "source_url", "retrieved_at"])
+    print("Keep on-domain rows with a clear name; agency contacts (off-domain) drop out.")
+
+
+def cmd_events(a):
+    """T4 event feed: 8-K Item 5.02 and Form D filings for watched companies in a window."""
+    watch = {r["cik"].lstrip("0") for r in read(a.ciks)}
+    out = []
+    for r in sec.index({"8-K", "D"}, a.since, a.until):
+        if r["cik"].lstrip("0") not in watch:
+            continue
+        if r["form"] == "8-K":
+            f = next((f for f in sec.recent_filings(sec.submissions(r["cik"]) or {}) if f["accession"] == r["accession"]), None)
+            if not f or "5.02" not in (f["items"] or ""):
+                continue
+            kind, url = "job change (8-K 5.02)", sec.archive_url(r["cik"], r["accession"], f["doc"])
+        else:
+            kind, url = "funding (Form D)", sec.archive_url(r["cik"], r["accession"], "primary_doc.xml")
+        out.append({"date_logged": http.now()[:10], "account_cik": r["cik"], "company": r["company"], "event_type": kind,
+                    "event_date": r["date"], "public_source_url": url, "logged_by": "bench-data"})
+    write(a.out, "t4-events.candidates.csv", out, ["date_logged", "account_cik", "company", "event_type", "event_date",
+                                                  "public_source_url", "logged_by"])
+
+
+def cmd_uk(a):
+    """Companies House: profiles and officers (appointments and resignations) for UK companies."""
+    profiles, officers, numbers = [], [], [r["company_number"] for r in read(a.numbers)]
+    for i, n in enumerate(numbers, 1):
+        p = sources.ch_company(n)
+        if p:
+            profiles.append({**p, "source_url": f"{sources.CH}/company/{n}", "retrieved_at": http.now()})
+            officers += [{**o, "source_url": f"{sources.CH}/company/{n}/officers", "retrieved_at": http.now()}
+                         for o in sources.ch_officers(n)]
+        progress(i, len(numbers))
+    write(a.out, "uk-companies.csv", profiles, ["company_number", "name", "status", "sic_codes", "country", "source_url", "retrieved_at"])
+    write(a.out, "uk-officers.csv", officers, ["company_number", "name", "role", "occupation", "appointed_on", "resigned_on",
+                                               "source_url", "retrieved_at"])
+
+
+def build_parser():
+    p = argparse.ArgumentParser(prog="benchdata", description=__doc__.split("\n\n")[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    day = date.fromisoformat
+
+    def cmd(name, fn, help_, **args):
+        s = sub.add_parser(name, help=help_)
+        s.add_argument("--out", required=True, help="output folder, e.g. ../clay-bench-ease-pricing/private/datasets/candidates")
+        for flag, kw in args.items():
+            s.add_argument(f"--{flag.replace('_', '-')}", **kw)
+        s.set_defaults(fn=fn)
+
+    cmd("formd", cmd_formd, "private funding rounds and their executives (Form D)",
+        since=dict(type=day, required=True), until=dict(type=day, required=True), limit=dict(type=int, default=300),
+        seed=dict(type=int, default=2026))
+    cmd("officers", cmd_officers, "officers as of a past window (Forms 3/4): the T3 seed",
+        since=dict(type=day, required=True), until=dict(type=day, required=True), limit=dict(type=int, default=500),
+        seed=dict(type=int, default=2026))
+    cmd("officers-truth", cmd_officers_truth, "current role of each seed officer: T3 key candidates",
+        seed=dict(required=True), recent_days=dict(type=int, default=270))
+    cmd("firmographics", cmd_firmographics, "website, industry, HQ country, 10-K headcount for SEC filers",
+        ciks=dict(required=True, help="CSV with a cik column"), wikidata=dict(action="store_true"),
+        headcount=dict(action="store_true"))
+    cmd("jobs", cmd_jobs, "public job boards: Salesforce evidence and SDR openings",
+        companies=dict(required=True, help="CSV with domain (and optional name) columns"))
+    cmd("press-contacts", cmd_press_contacts, "named emails in 8-K press releases: gold candidates",
+        ciks=dict(required=True), since=dict(type=day, required=True), per_company=dict(type=int, default=5))
+    cmd("events", cmd_events, "T4 event feed for watched companies",
+        ciks=dict(required=True), since=dict(type=day, required=True), until=dict(type=day, required=True))
+    cmd("uk", cmd_uk, "Companies House profiles and officers", numbers=dict(required=True, help="CSV with company_number"))
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    try:
+        args.fn(args)
+    except http.FetchError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(2)

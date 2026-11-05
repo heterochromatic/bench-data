@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<ownershipDocument>
+  <periodOfReport>2026-09-01</periodOfReport>
+  <issuer><issuerCik>0004000004</issuerCik><issuerName>Gamma Cloud Corp</issuerName></issuer>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerCik>0002000002</rptOwnerCik><rptOwnerName>Smith Jane</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship><isOfficer>true</isOfficer><officerTitle>CMO</officerTitle></reportingOwnerRelationship>
+  </reportingOwner>
+</ownershipDocument>
