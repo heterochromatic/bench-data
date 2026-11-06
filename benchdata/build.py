@@ -639,7 +639,8 @@ def t5_qualifies(c):
     except (TypeError, ValueError):
         n = None
     v, reg = vertical(c.get("industry", "")), region(c.get("hq_country", ""))
-    if (n is not None and not 50 <= n <= 500) or (v and v != "Software") or (c.get("hq_country") and reg != "na"):
+    # IT services (SIC 7373/7374 "computer ... systems design / processing") includes many SaaS firms: not proof either way.
+    if (n is not None and not 50 <= n <= 500) or (v and v not in ("Software", "IT services")) or (c.get("hq_country") and reg != "na"):
         return "N"
     return "Y" if n is not None and v == "Software" and reg == "na" else "unknown"
 
@@ -675,7 +676,9 @@ def _source_text(url):
         if "sec.gov" in url:
             raw = http.get_text(url, headers=sec.headers())
         elif "company-information.service.gov.uk/document" in url:
-            raw = http.get_text(f"{url}/content", headers={**sources.ch_headers(), "Accept": "application/xhtml+xml"})
+            raw = http.get_text(f"{url}/content", headers={**sources.ch_headers(), "Accept": "application/xhtml+xml"}) or ""
+            m = sources.AVG_EMPLOYEES.search(raw)   # the headcount is a tagged value with no visible label
+            raw += f" Average number of employees: {m.group(1)}" if m else ""
         else:
             raw = http.get_text(url, headers=sources.SITE_HEADERS)
     except http.FetchError:
@@ -683,9 +686,13 @@ def _source_text(url):
     return sec.html_to_text(raw or "")
 
 
-def _number_in(text, n):
+def _headcount_in(text, n):
+    """The number, as a whole number (not part of 1,120 or $150), within 150 characters of a word for staff."""
     n = int(n)
-    return any(f in text for f in (f"{n:,}", str(n))) if n >= 10 else bool(re.search(rf"\b{n}\b", text))
+    for m in re.finditer(rf"(?<![\d,.$])(?:{re.escape(f'{n:,}')}|{n})(?!\d|[,.]\d)", text):
+        if re.search(r"employ|associates|team members|workforce|headcount|persons|people|staff|colleagues", text[max(0, m.start() - 150): m.end() + 150], re.I):
+            return True
+    return False
 
 
 CHECKS = {
@@ -694,8 +701,8 @@ CHECKS = {
     "t3-ground-truth": (lambda r, t: r["changed"] in ("unknown", "") or
                         (r["true_company"].lower() in t.lower() and all(w in t.lower() for w in r["true_title"].lower().split()[:3])),
                         "evidence_url"),
-    "firmographics-truth": (lambda r, t: not r["true_employee_count"] or _number_in(t, r["true_employee_count"]), "source_url"),
-    "t5-ground-truth": (lambda r, t: not r["employee_count"] or _number_in(t, r["employee_count"]), "headcount_source_url"),
+    "firmographics-truth": (lambda r, t: not r["true_employee_count"] or _headcount_in(t, r["true_employee_count"]), "source_url"),
+    "t5-ground-truth": (lambda r, t: not r["employee_count"] or _headcount_in(t, r["employee_count"]), "headcount_source_url"),
 }
 
 

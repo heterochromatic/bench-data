@@ -291,6 +291,29 @@ class BenchDataTest(unittest.TestCase):
         self.assertEqual(q({"employees": "120", "industry": "Biotechnology", "hq_country": "US"}), "N")
         self.assertEqual(q({"employees": "120", "industry": "Services-Prepackaged Software", "hq_country": "GB"}), "N")
         self.assertEqual(q({"employees": "", "industry": "Services-Prepackaged Software", "hq_country": "US"}), "unknown")
+        self.assertEqual(q({"employees": "120", "industry": "Services-Computer Integrated Systems Design", "hq_country": "US"}), "unknown")
+        self.assertEqual(q({"employees": "120", "industry": "Services-Prepackaged Software", "hq_country": "CA"}), "Y")
+
+    def test_headcount_in_source(self):
+        h = build._headcount_in
+        self.assertTrue(h("As of June 30 we had approximately 2,100 employees.", "2100"))
+        self.assertTrue(h("Employees. We had 150 full-time staff.", "150"))
+        self.assertFalse(h("Revenue was $150 million. We have many employees.", "150"))
+        self.assertFalse(h("We have 1,120 employees.", "120"))
+        self.assertFalse(h("We sold 150 units this year.", "150"))
+
+    def test_headcount_totals_not_parts(self):
+        h = lambda t: sec.headcount_from_10k(t)[0]
+        self.assertEqual(h("As of December 31, 2025, the Company employed 723 full-time and 32 part-time employees."), 723)
+        self.assertIsNone(h("As of the filing, we have approximately 1,200 employees who are engaged in the development of products."))
+        self.assertEqual(h("We had approximately 23,600 employees, comprised of approximately 15,600 full-time and 8,000 part-time employees."), 23600)
+        self.assertEqual(h("As of June 30, 2026, we had over 3,500 employees in our research and development organization. "
+                           "Human capital. We had approximately 9,000 employees in total."), 9000)
+
+    def test_headcount_ignores_acquired_company_far_from_heading(self):
+        text = ("Item 1. As of June 30, we have approximately 2,100 employees. " + "filler " * 600 +
+                "to keep our employees and attract new ones. " + "filler " * 600 + "Acme has more than 200 employees.")
+        self.assertEqual(sec.headcount_from_10k(text)[0], 2100)
 
     def test_verticals_and_agencies(self):
         self.assertEqual(build.vertical("Services-Prepackaged Software"), "Software")

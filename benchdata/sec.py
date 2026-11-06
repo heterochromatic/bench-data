@@ -178,13 +178,20 @@ def html_to_text(raw):
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", raw)))
 
 
-COUNT = re.compile(r"(\d[\d,]*(?:\.\d+)?)(\s+million)?\s+((?:[A-Za-z-]+\s+){0,5}?)"
+COUNT = re.compile(r"(\d(?:[\d,]*\d)?(?:\.\d+)?)(\s+million)?\s+((?:[A-Za-z-]+\s+){0,5}?)"
                    r"(employees|associates|colleagues|team members|persons|people|full-time equivalents)\b", re.I)
 # Only these words may sit between the number and the noun ("1,240 full-time employees"), so
 # "18,261 shares were awarded to associates" or "page 26 We believe our people" don't count.
 BETWEEN_OK = {"full-time", "part-time", "full", "part", "time", "and", "temporary", "active", "equivalent", "employee",
               "regular", "permanent", "total", "global", "seasonal", "hourly", "salaried", "worldwide", "other", "our"}
 CONTEXT = re.compile(r"employ|workforce|headcount|\bhad\b|total of|as of|approximately|network of|human capital", re.I)
+OWN = re.compile(r"\bwe\s+(?:currently\s+)?(?:had|have|employ|employed)\b|\bour\s+(?:total\s+)?(?:workforce|headcount)\b", re.I)
+# "723 full-time and 32 part-time employees": take the full-time count.
+FULL_PART = re.compile(r"(\d(?:[\d,]*\d)?)\s+full[- ]time\s+(?:employees\s+|individuals\s+)?and\s+\d(?:[\d,]*\d)?\s+(?:part[- ]time|temporary)", re.I)
+PART_BEFORE = re.compile(r"\b(?:from|covering|including|comprised of|consisting of|and|of whom|of which)\s+(?:approximately\s+|about\s+|over\s+|more than\s+)?$", re.I)
+PART_AFTER = re.compile(r"\s+(?:(?:were\s+|are\s+)?(?:in|within)\s+(?:our\s+|the\s+)?(?:global\s+)?(?:research|r&d|sales|marketing|engineering|product|development|customer|support|manufacturing|technology)"
+                        r"|in\s+(?:our|the|its)\s+[\w&\- ]{0,40}?(?:organization|business|unit|team|division|segment|department|function)"
+                        r"|(?:who\s+(?:are|were)\s+)?(?:dedicated|engaged|working (?:in|on))|supporting (?:research|r&d|sales))", re.I)
 HUMAN_CAPITAL = re.compile(r"human capital|\bemployees\b\s+(?:and|as of)|number of employees", re.I)
 
 
@@ -192,11 +199,20 @@ def headcount_from_10k(text):
     """Total headcount stated in a 10-K ("we had approximately 1,240 full-time employees"), searched
     from the Human Capital section first. Returns (count, snippet) or (None, "")."""
     hc = HUMAN_CAPITAL.search(text)
-    for start in ([hc.start()] if hc else []) + [0]:
+    # First pass: the company speaking for itself ("we had 2,100 employees"), so a customer's or an
+    # acquired company's headcount ("has more than 200 employees") doesn't win by appearing first.
+    for start, context in [(0, OWN), (0, None)] + ([(hc.start(), CONTEXT)] if hc else []) + [(0, CONTEXT)]:
+        if context is None:   # then "723 full-time and 32 part-time employees": the full-time count
+            for m in FULL_PART.finditer(text):
+                if CONTEXT.search(text[max(0, m.start() - 70): m.start()]):
+                    return int(m.group(1).replace(",", "")), text[max(0, m.start() - 80): m.end() + 40].strip()
+            continue
         for m in COUNT.finditer(text, start):
             words = m.group(3).lower().split()
-            if any(w not in BETWEEN_OK for w in words) or not CONTEXT.search(text[max(0, m.start() - 70): m.start()]):
+            if any(w not in BETWEEN_OK for w in words) or not context.search(text[max(0, m.start() - 70): m.start()]):
                 continue
+            if PART_BEFORE.search(text[max(0, m.start() - 25): m.start()]) or PART_AFTER.match(text, m.end()):
+                continue   # a department, a country, a union or an earlier year, not the total
             if m.group(4).lower() == "people" and not re.search(r"employ", text[max(0, m.start() - 80): m.end()], re.I):
                 continue
             raw = m.group(1).replace(",", "")

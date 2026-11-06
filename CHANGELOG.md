@@ -18,3 +18,4 @@
 - `public-contacts`: officers at SEC filers with domain, size and region.
 - 10-K reading: company website (`website_from_10k`) and a looser, guarded headcount reader (`headcount_from_10k`). On the 555-company pull: domains 323 → 546 of 600 officers, headcount 338 → 459.
 - SEC paced at ~4/s with long 429 backoff; failed Form D filings skipped; more parked-page patterns.
+- Headcount fixes (2026-11-05): `headcount_from_10k` now prefers the company's own statement ("we had 2,100 employees"), takes the full-time count from "723 full-time and 32 part-time", and skips department, union and growth figures; it had misread 70 of 787 10-K headcounts (part-time counts, acquired companies). `verify-sources` now needs the number as a whole number near a word for staff, not anywhere in the filing, and reads the tagged headcount in UK accounts. T5: "IT services" industry codes (SIC 7373/7374) count as unknown, not as proof a company isn't software.
