@@ -276,6 +276,14 @@ class BenchDataTest(unittest.TestCase):
         build.main(["verify-sources", "--out", str(self.out), "--file", firm])
         self.assertEqual(len(read(self.out / "w1-firmographics-truth.verified.csv")), 1)
 
+    def test_sic_companies(self):
+        idx = (FIX / "form.idx").read_text() + "10-K        ACME SOFTWARE INC                                             1000001     2026-02-20  edgar/data/1000001/0001000001-26-000210.txt\n"
+        orig = http.transport
+        http.transport = lambda u, h, t: (200, idx.encode()) if "form.idx" in u else orig(u, h, t)
+        build.main(["sic-companies", "--out", str(self.out), "--sic", "7370-7374", "--since", "2026-01-01", "--until", "2026-03-31"])
+        [c] = read(self.out / "sic-companies.candidates.csv")
+        self.assertEqual((c["domain"], c["sic"], c["employees"], c["hq_country"]), ("acme.example.com", "7372", "1240", "US"))
+
     def test_verticals_and_agencies(self):
         self.assertEqual(build.vertical("Services-Prepackaged Software"), "Software")
         self.assertEqual(build.vertical("Biotechnology"), "Healthcare")

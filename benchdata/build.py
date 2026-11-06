@@ -537,6 +537,36 @@ def _contact_pool(d):
     return pool
 
 
+def cmd_sic_companies(a):
+    """Companies in a SIC code range that filed a given form (default 10-K), with website and headcount
+    from that 10-K and HQ country from their SEC record: e.g. software companies for T5."""
+    lo, _, hi = a.sic.partition("-")
+    lo, hi = int(lo), int(hi or lo)
+    out = []
+    idx = sample(sec.index({a.form}, a.since, a.until), a.seed)
+    for i, r in enumerate(idx, 1):
+        if len(out) >= a.limit:
+            break
+        try:
+            sub = sec.submissions(r["cik"]) or {}
+            f = sec.company_facts(sub)
+            if not (f["sic"] and lo <= int(f["sic"]) <= hi):
+                continue
+            text, kurl = sec.latest_10k(r["cik"], sub)
+        except http.FetchError:
+            continue
+        dom = sources.domain_of(f["website"]) if f["website"] else (sec.website_from_10k(text)[0] if text else "")
+        n, _ = sec.headcount_from_10k(text) if text else (None, "")
+        if dom:
+            out.append({"domain": dom, "name": f["name"], "cik": r["cik"], "sic": f["sic"], "industry": f["sic_description"],
+                        "hq_country": f["hq_country"], "employees": n if n is not None else "", "employees_source_url": kurl,
+                        "source_url": f"{sec.DATA}/submissions/CIK{int(r['cik']):010d}.json", "retrieved_at": http.now()})
+        progress(len(out), a.limit, every=25)
+    write(a.out, "sic-companies.candidates.csv", out, ["domain", "name", "cik", "sic", "industry", "hq_country", "employees",
+                                                       "employees_source_url", "source_url", "retrieved_at"])
+    print(f"{len(out)} companies in SIC {a.sic}; with headcount: {sum(bool(r['employees']) for r in out)}")
+
+
 def cmd_t1_assemble(a):
     """T1 input: people at matched domains, none at a company already in the W1 input (no overlap)."""
     d = Path(a.candidates)
@@ -729,6 +759,9 @@ def build_parser():
         firmographic_sample=dict(type=int, default=200), seed=dict(type=int, default=2026))
     cmd("verify-sources", cmd_verify_sources, "re-check every answer-key row against its cited source (replaces a hand spot-check)",
         file=dict(required=True, help="a *-email-gold, t3-ground-truth or *-firmographics-truth .candidates.csv"))
+    cmd("sic-companies", cmd_sic_companies, "companies in a SIC range that filed a 10-K, with website and headcount",
+        sic=dict(required=True, help="e.g. 7370-7374"), since=dict(type=day, required=True), until=dict(type=day, required=True),
+        form=dict(default="10-K"), limit=dict(type=int, default=400), seed=dict(type=int, default=2026))
     cmd("t1-assemble", cmd_t1_assemble, "T1 input: people at matched domains, excluding W1's companies",
         candidates=dict(required=True), exclude=dict(help="W1 input CSV: its company domains are left out"),
         rows=dict(type=int, default=500), seed=dict(type=int, default=2026))
