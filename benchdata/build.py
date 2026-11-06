@@ -471,6 +471,57 @@ def cmd_w1_assemble(a):
     print("Record the cell counts in the waterfall config (disclosures.cells.counts) before freezing.")
 
 
+def _contact_pool(d):
+    """People at matched domains from a candidates folder: Form D contacts and SEC-filer officers."""
+    pool = []
+    if (d / "contacts.candidates.csv").exists():
+        filing = {f["company"]: f for f in read(d / "formd-filings.csv")} if (d / "formd-filings.csv").exists() else {}
+        pool += [{**r, "hq_country": filing.get(r["company"], {}).get("hq_country", "US"), "source": "form-d"}
+                 for r in read(d / "contacts.candidates.csv")]
+    if (d / "public-contacts.candidates.csv").exists():
+        pool += [{**r, "source": "sec-filer"} for r in read(d / "public-contacts.candidates.csv") if r["company_domain"]]
+    return pool
+
+
+def cmd_t1_assemble(a):
+    """T1 input: people at matched domains, none at a company already in the W1 input (no overlap)."""
+    d = Path(a.candidates)
+    exclude = {r["company_domain"].lower() for r in read(a.exclude)} if a.exclude else set()
+    seen, rows = set(), []
+    for r in _contact_pool(d):
+        dom = (r["company_domain"] or "").lower()
+        key = (r["first_name"].lower(), r["last_name"].lower(), dom)
+        if all(key) and key not in seen and dom not in exclude and region(r.get("hq_country", "")):
+            seen.add(key)
+            rows.append(r)
+    random.Random(a.seed).shuffle(rows)
+    rows = rows[: a.rows]
+    for i, r in enumerate(rows, 1):
+        r["input_id"] = str(i)
+    write(a.out, "t1-input.csv", rows, ["input_id", "first_name", "last_name", "company_domain"])
+    write(a.out, "t1-input-sources.csv", rows, ["input_id", "company", "company_domain", "hq_country", "source",
+                                                "person_source_url", "domain_source_url"])
+    print(f"{len(rows)} rows; regions: {dict(collections.Counter(region(r.get('hq_country', '')) for r in rows))}; "
+          f"excluded {len(exclude)} W1 company domains")
+
+
+def cmd_t5_assemble(a):
+    """T5 input: company domains (one per company) from every candidates folder given."""
+    doms, rows = set(), []
+    for folder in a.candidates.split(","):
+        for r in _contact_pool(Path(folder)):
+            dom = (r["company_domain"] or "").lower()
+            if dom and dom not in doms:
+                doms.add(dom)
+                rows.append({"domain": dom, "name": r.get("company", ""), "employees": r.get("employees", ""),
+                             "employees_source_url": r.get("employees_source_url", "")})
+    random.Random(a.seed).shuffle(rows)
+    rows = rows[: a.rows]
+    write(a.out, "t5-domains.csv", rows, ["domain"])
+    write(a.out, "t5-companies.csv", rows, ["domain", "name", "employees", "employees_source_url"])
+    print(f"{len(rows)} domains; with headcount: {sum(bool(r['employees']) for r in rows)}")
+
+
 def cmd_domains(a):
     """Company domains from the company's own homepage: name-based guesses, accepted only when the
     page title names the company. With --executives, also writes contacts ready to enrich."""
@@ -555,6 +606,12 @@ def build_parser():
         candidates=dict(required=True, help="folder with contacts / public-contacts / uk-contacts candidate files"),
         cells=dict(default="smb/na,mid/na,ent/na,smb/emea"), cap=dict(type=int, default=400),
         firmographic_sample=dict(type=int, default=200), seed=dict(type=int, default=2026))
+    cmd("t1-assemble", cmd_t1_assemble, "T1 input: people at matched domains, excluding W1's companies",
+        candidates=dict(required=True), exclude=dict(help="W1 input CSV: its company domains are left out"),
+        rows=dict(type=int, default=500), seed=dict(type=int, default=2026))
+    cmd("t5-assemble", cmd_t5_assemble, "T5 input: one domain per company from the given candidate folders",
+        candidates=dict(required=True, help="comma-separated candidate folders"), rows=dict(type=int, default=1000),
+        seed=dict(type=int, default=2026))
     cmd("domains", cmd_domains, "company domains from the company's own homepage (title must name the company)",
         companies=dict(required=True, help="CSV with a company or name column, e.g. formd-filings.csv"),
         executives=dict(help="formd-executives.csv: also write contacts.candidates.csv for matched companies"),

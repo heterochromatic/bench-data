@@ -234,6 +234,19 @@ class BenchDataTest(unittest.TestCase):
         gold_row = next(r for r in rows if r["input_id"] == "W0001")
         self.assertEqual((gold_row["first_name"], gold_row["company_domain"], gold_row["segment_size"]), ("Gina", "big.example.com", "ent"))
 
+    def test_t1_excludes_w1_companies_and_t5_dedupes(self):
+        c = self.out / "pool"
+        c.mkdir()
+        with open(c / "contacts.candidates.csv", "w", newline="") as f:
+            w = csv.writer(f); w.writerow(["first_name", "last_name", "company", "company_domain"])
+            w.writerows([["A", "One", "Co1", "one.example.com"], ["B", "Two", "Co2", "two.example.com"], ["C", "Three", "Co2", "two.example.com"]])
+        excl = self.csv_of("w1.csv", [["W1", "x", "y", "one.example.com"]], ["input_id", "first_name", "last_name", "company_domain"])
+        build.main(["t1-assemble", "--out", str(self.out), "--candidates", str(c), "--exclude", excl])
+        rows = read(self.out / "t1-input.csv")
+        self.assertEqual(sorted(r["company_domain"] for r in rows), ["two.example.com", "two.example.com"])
+        build.main(["t5-assemble", "--out", str(self.out), "--candidates", str(c)])
+        self.assertEqual(sorted(r["domain"] for r in read(self.out / "t5-domains.csv")), ["one.example.com", "two.example.com"])
+
     def test_verticals_and_agencies(self):
         self.assertEqual(build.vertical("Services-Prepackaged Software"), "Software")
         self.assertEqual(build.vertical("Biotechnology"), "Healthcare")
