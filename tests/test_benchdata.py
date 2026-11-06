@@ -247,6 +247,20 @@ class BenchDataTest(unittest.TestCase):
         build.main(["t5-assemble", "--out", str(self.out), "--candidates", str(c)])
         self.assertEqual(sorted(r["domain"] for r in read(self.out / "t5-domains.csv")), ["one.example.com", "two.example.com"])
 
+    def test_verify_sources_keeps_only_confirmed_rows(self):
+        gold = self.csv_of("w1-email-gold.candidates.csv",
+                           [["W1", "maria.chen@acme.example.com", "", "https://www.sec.gov/Archives/edgar/data/1000001/000100000126000805/acme-ex99_1.htm"],
+                            ["W2", "nobody@acme.example.com", "", "https://www.sec.gov/Archives/edgar/data/1000001/000100000126000805/acme-ex99_1.htm"]],
+                           ["input_id", "known_email", "known_phone", "source_url"])
+        build.main(["verify-sources", "--out", str(self.out), "--file", gold])
+        self.assertEqual([r["input_id"] for r in read(self.out / "w1-email-gold.verified.csv")], ["W1"])
+        self.assertEqual(read(self.out / "w1-email-gold.rejected.csv")[0]["verify_status"], "value not in source")
+        firm = self.csv_of("w1-firmographics-truth.candidates.csv",
+                           [["W3", "1240", "Software", "US", "https://www.sec.gov/Archives/edgar/data/1000001/000100000126000210/acme-10k.htm"]],
+                           ["input_id", "true_employee_count", "true_industry", "true_hq_country", "source_url"])
+        build.main(["verify-sources", "--out", str(self.out), "--file", firm])
+        self.assertEqual(len(read(self.out / "w1-firmographics-truth.verified.csv")), 1)
+
     def test_verticals_and_agencies(self):
         self.assertEqual(build.vertical("Services-Prepackaged Software"), "Software")
         self.assertEqual(build.vertical("Biotechnology"), "Healthcare")
@@ -256,6 +270,16 @@ class BenchDataTest(unittest.TestCase):
         self.assertTrue(build.is_agency("", "62012;73110"))
         self.assertTrue(build.is_agency("Services-Advertising Agencies"))
         self.assertEqual((build.region("CA"), build.region("GB"), build.region("JP"), build.region("BR")), ("na", "emea", "apac", ""))
+        self.assertEqual((build.seniority("Chief Financial Officer"), build.seniority("SVP, Sales"), build.seniority("Director of IT"),
+                          build.seniority("Controller"), build.seniority("")), ("c_suite", "vp", "director", "other", "unknown"))
+        self.assertEqual((build.seniority("executive officer"), build.seniority("company director")), ("executive", "executive"))
+        self.assertEqual(build.job_function("company director"), "unknown")
+        self.assertTrue(all(len(g.split(".")[0]) <= 63 for g in sources.domain_guesses("A" * 80 + " Holdings Inc")))
+        self.assertEqual((build.job_function("Chief Financial Officer"), build.job_function("SVP, Sales"),
+                          build.job_function("Chief Marketing Officer"), build.job_function("General Counsel")),
+                         ("finance", "sales", "marketing", "legal"))
+        self.assertEqual((build.funding_band("500000"), build.funding_band("9000000"), build.funding_band("Indefinite")),
+                         ("under_1m", "1m_10m", ""))
 
     def test_companies_house(self):
         nums = self.csv_of("uk.csv", [["09999999"]], ["company_number"])

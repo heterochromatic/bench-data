@@ -266,6 +266,41 @@ UK_SIC_VERTICALS = [("731", "Marketing and media"), ("702", "Marketing and media
 AGENCY_UK_SIC = {"73110", "73120", "70210"}
 
 
+SENIORITY_RULES = [("executive", r"^executive officer$|^company director$"),
+                   ("c_suite", r"\bchief\b|\bc[efotmrpi]o\b|\bpresident\b|\bfounder\b|\bowner\b|managing director|\bceo\b"),
+                   ("vp", r"\bvice president\b|\bvp\b|\bsvp\b|\bevp\b|\bhead of\b"),
+                   ("director", r"\bdirector\b"),
+                   ("other", r"\w")]
+FUNCTION_RULES = [("finance", r"financ|cfo|accounting|controller|treasur|investor"),
+                  ("sales", r"sales|revenue|cro\b|business development|commercial"),
+                  ("marketing", r"marketing|cmo\b|brand|communications|growth"),
+                  ("engineering_it", r"technolog|cto\b|engineer|information|cio\b|product|data|digital|software"),
+                  ("legal", r"legal|counsel|secretary|compliance"),
+                  ("hr", r"people|human|hr\b|talent"),
+                  ("operations", r"operat|coo\b|supply|manufactur"),
+                  ("executive", r"chief executive|ceo\b|president|founder|managing director|owner")]
+
+
+def seniority(title):
+    t = (title or "").lower()
+    return next((v for v, pat in SENIORITY_RULES if re.search(pat, t)), "unknown") if t else "unknown"
+
+
+def job_function(title):
+    t = (title or "").lower()
+    if t in ("executive officer", "company director"):
+        return "unknown"   # generic officer titles from Form D and Companies House say nothing about function
+    return next((v for v, pat in FUNCTION_RULES if re.search(pat, t)), "other") if t else "unknown"
+
+
+def funding_band(amount):
+    try:
+        n = float(amount)
+    except (TypeError, ValueError):
+        return ""
+    return "under_1m" if n < 1e6 else "1m_10m" if n < 1e7 else "10m_plus"
+
+
 def vertical(industry_text="", uk_sic=""):
     for code in (uk_sic or "").split(";"):
         for prefix, v in UK_SIC_VERTICALS:
@@ -402,11 +437,15 @@ def cmd_w1_assemble(a):
             f = filing.get(r["company"], {})
             pools.append({**r, "segment_size": "smb", "size_basis": "assumed (Form D private company)", "employees": "",
                           "hq_country": f.get("hq_country", "US"), "industry": f.get("industry_group", ""),
-                          "startup": "Y", "source": "form-d"})
+                          "startup": "Y", "source": "form-d", "title": "executive officer",
+                          "segment_funding": funding_band(f.get("total_sold") or f.get("total_offering"))})
     for name, src in (("public-contacts.candidates.csv", "sec-filer"), ("uk-contacts.candidates.csv", "companies-house"),
                       ("agency-contacts.candidates.csv", "companies-house (agency)")):
         if (d / name).exists():
-            pools += [{**r, "size_basis": "headcount" if r.get("employees") else "", "source": src} for r in read(d / name)]
+            pools += [{**r, "size_basis": "headcount" if r.get("employees") else "", "source": src,
+                       # UK filings rarely give an occupation; a statutory director of a small company is its executive
+                       "title": r.get("title") or ("company director" if src.startswith("companies-house") else "")}
+                      for r in read(d / name)]
     for r in pools:
         sic = r.get("industry", "") if r["source"].startswith("companies-house") else ""
         text = "" if sic else r.get("industry", "")
@@ -414,6 +453,10 @@ def cmd_w1_assemble(a):
         r["segment_vertical"] = vertical(text, sic)
         r["segment_startup"] = r.get("startup", "N")
         r["segment_agency"] = "Y" if is_agency(text, sic) else "N"
+        r["segment_seniority"] = seniority(r.get("title"))
+        r["segment_function"] = job_function(r.get("title"))
+        r["segment_ownership"] = "public" if r["source"] == "sec-filer" else "private"
+        r.setdefault("segment_funding", "")
     # Gold people (named, on-domain press contacts) go first so the cap never drops them; their cell is
     # their company's, from the SEC-filer pool.
     gold = []
@@ -429,6 +472,8 @@ def cmd_w1_assemble(a):
                              "segment_size": co["segment_size"], "segment_region": region(co["hq_country"]), "employees": co["employees"],
                              "segment_vertical": vertical(co.get("industry", "")), "segment_startup": "N",
                              "segment_agency": "Y" if is_agency(co.get("industry", "")) else "N",
+                             "segment_seniority": "unknown", "segment_function": "unknown", "segment_ownership": "public",
+                             "segment_funding": "",
                              "hq_country": co["hq_country"], "size_basis": "headcount" if co["employees"] else "", "source": "press-release (gold)",
                              "known_email": r["email"], "person_source_url": r["source_url"], "employees_source_url": co["employees_source_url"]})
     seen, rows = set(), []
@@ -452,7 +497,8 @@ def cmd_w1_assemble(a):
     for i, r in enumerate(picked, 1):
         r["input_id"] = f"W{i:04d}"
     write(a.out, "w1-input.csv", picked, ["input_id", "first_name", "last_name", "company_domain", "segment_size", "segment_region",
-                                          "segment_vertical", "segment_startup", "segment_agency"])
+                                          "segment_vertical", "segment_startup", "segment_agency", "segment_seniority",
+                                          "segment_function", "segment_ownership", "segment_funding"])
     write(a.out, "w1-input-sources.csv", picked, ["input_id", "company", "company_domain", "cell", "size_basis", "employees",
                                                   "hq_country", "source", "person_source_url", "domain_source_url",
                                                   "domain_source", "employees_source_url"])
@@ -468,6 +514,8 @@ def cmd_w1_assemble(a):
     print("cell counts:", dict(sorted(counts.items())))
     print("verticals:", dict(collections.Counter(r["segment_vertical"] or "unknown" for r in picked).most_common()))
     print("startups:", sum(r["segment_startup"] == "Y" for r in picked), "| agencies:", sum(r["segment_agency"] == "Y" for r in picked))
+    for dim in ("seniority", "function", "ownership", "funding"):
+        print(f"{dim}:", dict(collections.Counter(r[f"segment_{dim}"] or "n/a" for r in picked).most_common()))
     print("Record the cell counts in the waterfall config (disclosures.cells.counts) before freezing.")
 
 
@@ -520,6 +568,56 @@ def cmd_t5_assemble(a):
     write(a.out, "t5-domains.csv", rows, ["domain"])
     write(a.out, "t5-companies.csv", rows, ["domain", "name", "employees", "employees_source_url"])
     print(f"{len(rows)} domains; with headcount: {sum(bool(r['employees']) for r in rows)}")
+
+
+def _source_text(url):
+    """Text of a cited source: SEC documents with the SEC contact header, Companies House documents
+    with the API key (accounts need /content), anything else as a plain page."""
+    if not url:
+        return ""
+    try:
+        if "sec.gov" in url:
+            raw = http.get_text(url, headers=sec.headers())
+        elif "company-information.service.gov.uk/document" in url:
+            raw = http.get_text(f"{url}/content", headers={**sources.ch_headers(), "Accept": "application/xhtml+xml"})
+        else:
+            raw = http.get_text(url, headers=sources.SITE_HEADERS)
+    except http.FetchError:
+        return ""
+    return sec.html_to_text(raw or "")
+
+
+def _number_in(text, n):
+    n = int(n)
+    return any(f in text for f in (f"{n:,}", str(n))) if n >= 10 else bool(re.search(rf"\b{n}\b", text))
+
+
+CHECKS = {
+    # key file: (what must appear in the cited source, source column)
+    "email-gold": (lambda r, t: r["known_email"].lower() in t.lower(), "source_url"),
+    "t3-ground-truth": (lambda r, t: r["changed"] in ("unknown", "") or
+                        (r["true_company"].lower() in t.lower() and all(w in t.lower() for w in r["true_title"].lower().split()[:3])),
+                        "evidence_url"),
+    "firmographics-truth": (lambda r, t: not r["true_employee_count"] or _number_in(t, r["true_employee_count"]), "source_url"),
+}
+
+
+def cmd_verify_sources(a):
+    """Re-fetch every answer-key candidate's cited source and keep only rows whose value appears in it.
+    Replaces a hand spot-check: every row is checked, by machine, and failures are listed."""
+    kind = next(k for k in CHECKS if k in Path(a.file).name)
+    check, col = CHECKS[kind]
+    rows = read(a.file)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        texts = list(pool.map(lambda r: _source_text(r.get(col, "")), rows))
+    passed, failed = [], []
+    for r, t in zip(rows, texts):
+        (passed if t and check(r, t) else failed).append({**r, "verify_status": "pass" if t and check(r, t) else ("no source" if not t else "value not in source")})
+    out = Path(a.file).with_name(Path(a.file).name.replace(".candidates", ".verified"))
+    write(out.parent, out.name, passed, list(rows[0].keys()) + ["verify_status"] if rows else ["verify_status"])
+    write(out.parent, out.name.replace(".verified", ".rejected"), failed, list(rows[0].keys()) + ["verify_status"] if rows else ["verify_status"])
+    print(f"{kind}: {len(passed)} of {len(rows)} rows confirmed in their cited source; "
+          f"rejected: {dict(collections.Counter(r['verify_status'] for r in failed))}")
 
 
 def cmd_domains(a):
@@ -606,6 +704,8 @@ def build_parser():
         candidates=dict(required=True, help="folder with contacts / public-contacts / uk-contacts candidate files"),
         cells=dict(default="smb/na,mid/na,ent/na,smb/emea"), cap=dict(type=int, default=400),
         firmographic_sample=dict(type=int, default=200), seed=dict(type=int, default=2026))
+    cmd("verify-sources", cmd_verify_sources, "re-check every answer-key row against its cited source (replaces a hand spot-check)",
+        file=dict(required=True, help="a *-email-gold, t3-ground-truth or *-firmographics-truth .candidates.csv"))
     cmd("t1-assemble", cmd_t1_assemble, "T1 input: people at matched domains, excluding W1's companies",
         candidates=dict(required=True), exclude=dict(help="W1 input CSV: its company domains are left out"),
         rows=dict(type=int, default=500), seed=dict(type=int, default=2026))

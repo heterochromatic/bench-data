@@ -157,7 +157,7 @@ def domain_guesses(company, max_guesses=8, tlds=TLDS):
         stems.append(t[0])
     if len(t) > 2:
         stems.append("".join(t[:2]))
-    stems = list(dict.fromkeys(s for s in stems if len(s) >= 3))
+    stems = list(dict.fromkeys(s for s in stems if 3 <= len(s) <= 63))   # DNS labels are at most 63 characters
     return [s + tld for tld in tlds for s in stems][:max_guesses]
 
 

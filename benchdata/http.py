@@ -52,8 +52,8 @@ def _urllib_transport(url, headers, timeout):
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         return e.code, e.read()
-    except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
-        return None, str(e).encode()
+    except (urllib.error.URLError, TimeoutError, ConnectionError, UnicodeError, ValueError) as e:
+        return None, str(e).encode()   # unreachable or malformed URL: treated as no answer
 
 
 transport = _urllib_transport
