@@ -8,6 +8,7 @@ import argparse
 import collections
 import csv
 import random
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
@@ -232,8 +233,50 @@ EMEA = set("GB IE FR DE NL BE LU CH AT IT ES PT SE NO DK FI IS PL CZ IL AE ZA".s
 APAC = set("AU NZ JP KR SG HK CN TW IN ID MY PH TH VN".split())
 
 
+NA = {"US", "CA", "MX"}
+
+
 def region(country):
-    return "us" if country == "US" else "emea" if country in EMEA else "apac" if country in APAC else ""
+    """W1 regions: na (US, Canada, Mexico), emea, apac."""
+    return "na" if country in NA else "emea" if country in EMEA else "apac" if country in APAC else ""
+
+
+# Shared verticals (the W1 industry list). Rules over SEC/Form D industry text and UK SIC codes;
+# first match wins. shortcut: keyword rules, not a full SIC table; refine if many rows come out unknown.
+VERTICAL_RULES = [
+    ("Marketing and media", r"advertis|marketing|public relations|media|publishing|broadcast|motion picture|entertainment"),
+    ("Healthcare", r"health|pharma|biolog|biotech|medical|surgical|drug|hospital|diagnostic|dental"),
+    ("Software", r"software|prepackaged|internet|data processing|computer programming|saas"),
+    ("IT services", r"computer|information technology|semiconductor|electronic comp|technology"),
+    ("Financial services", r"bank|financ|insur|invest|credit|savings|reit and finance|securit|lending|capital"),
+    ("Energy and utilities", r"oil|gas|petroleum|electric|energy|utilit|mining|coal|solar|power"),
+    ("Real estate and construction", r"real estate|reit|construction|building|contractor|lodging"),
+    ("Retail and ecommerce", r"retail|stores|e-commerce|apparel|consumer|food|beverage|restaurant"),
+    ("Manufacturing", r"manufactur|industrial|machinery|chemical|metal|plastic|equipment|motor vehicle|aerospace"),
+    ("Telecommunications", r"telecom|telephone|communications|wireless|cable"),
+    ("Transportation and logistics", r"transport|trucking|airline|air courier|railroad|shipping|logistics|freight"),
+    ("Professional services", r"services-management|consulting|staffing|legal|engineering services|business services"),
+    ("Education", r"education|school|training"),
+    ("Hospitality and travel", r"hotel|travel|leisure|eating"),
+]
+UK_SIC_VERTICALS = [("731", "Marketing and media"), ("702", "Marketing and media"), ("58", "Software"), ("62", "Software"),
+                    ("63", "Software"), ("64", "Financial services"), ("65", "Financial services"), ("66", "Financial services"),
+                    ("86", "Healthcare"), ("47", "Retail and ecommerce"), ("70", "Professional services"),
+                    ("69", "Professional services"), ("41", "Real estate and construction"), ("68", "Real estate and construction")]
+AGENCY_UK_SIC = {"73110", "73120", "70210"}
+
+
+def vertical(industry_text="", uk_sic=""):
+    for code in (uk_sic or "").split(";"):
+        for prefix, v in UK_SIC_VERTICALS:
+            if code.startswith(prefix):
+                return v
+    t = (industry_text or "").lower()
+    return next((v for v, pat in VERTICAL_RULES if re.search(pat, t)), "")
+
+
+def is_agency(industry_text="", uk_sic=""):
+    return any(c in AGENCY_UK_SIC for c in (uk_sic or "").split(";")) or "advertising agenc" in (industry_text or "").lower()
 
 
 def size_segment(employees):
@@ -353,12 +396,24 @@ def cmd_w1_assemble(a):
     size x region cell, with a private provenance file and a firmographic-key candidate sample."""
     d = Path(a.candidates)
     pools = []
-    if (d / "contacts.candidates.csv").exists():   # Form D executives: private US companies
-        pools += [{**r, "segment_size": "smb", "segment_region": "us", "size_basis": "assumed (Form D private company)",
-                   "employees": "", "hq_country": "US", "industry": "", "source": "form-d"} for r in read(d / "contacts.candidates.csv")]
-    for name, src in (("public-contacts.candidates.csv", "sec-filer"), ("uk-contacts.candidates.csv", "companies-house")):
+    if (d / "contacts.candidates.csv").exists():   # Form D executives: privately funded companies (startups)
+        filing = {f["company"]: f for f in read(d / "formd-filings.csv")} if (d / "formd-filings.csv").exists() else {}
+        for r in read(d / "contacts.candidates.csv"):
+            f = filing.get(r["company"], {})
+            pools.append({**r, "segment_size": "smb", "size_basis": "assumed (Form D private company)", "employees": "",
+                          "hq_country": f.get("hq_country", "US"), "industry": f.get("industry_group", ""),
+                          "startup": "Y", "source": "form-d"})
+    for name, src in (("public-contacts.candidates.csv", "sec-filer"), ("uk-contacts.candidates.csv", "companies-house"),
+                      ("agency-contacts.candidates.csv", "companies-house (agency)")):
         if (d / name).exists():
             pools += [{**r, "size_basis": "headcount" if r.get("employees") else "", "source": src} for r in read(d / name)]
+    for r in pools:
+        sic = r.get("industry", "") if r["source"].startswith("companies-house") else ""
+        text = "" if sic else r.get("industry", "")
+        r["segment_region"] = region(r.get("hq_country", "")) or {"us": "na"}.get(r.get("segment_region", ""), r.get("segment_region", ""))
+        r["segment_vertical"] = vertical(text, sic)
+        r["segment_startup"] = r.get("startup", "N")
+        r["segment_agency"] = "Y" if is_agency(text, sic) else "N"
     # Gold people (named, on-domain press contacts) go first so the cap never drops them; their cell is
     # their company's, from the SEC-filer pool.
     gold = []
@@ -371,7 +426,9 @@ def cmd_w1_assemble(a):
             if r["on_domain"] == "True" and r["name"] and co and len(r["name"].split()) >= 2:
                 first, last = r["name"].split()[0], r["name"].split()[-1]
                 gold.append({"first_name": first, "last_name": last, "company": co["company"], "company_domain": co["company_domain"],
-                             "segment_size": co["segment_size"], "segment_region": co["segment_region"], "employees": co["employees"],
+                             "segment_size": co["segment_size"], "segment_region": region(co["hq_country"]), "employees": co["employees"],
+                             "segment_vertical": vertical(co.get("industry", "")), "segment_startup": "N",
+                             "segment_agency": "Y" if is_agency(co.get("industry", "")) else "N",
                              "hq_country": co["hq_country"], "size_basis": "headcount" if co["employees"] else "", "source": "press-release (gold)",
                              "known_email": r["email"], "person_source_url": r["source_url"], "employees_source_url": co["employees_source_url"]})
     seen, rows = set(), []
@@ -394,7 +451,8 @@ def cmd_w1_assemble(a):
             picked.append(r)
     for i, r in enumerate(picked, 1):
         r["input_id"] = f"W{i:04d}"
-    write(a.out, "w1-input.csv", picked, ["input_id", "first_name", "last_name", "company_domain", "segment_size", "segment_region"])
+    write(a.out, "w1-input.csv", picked, ["input_id", "first_name", "last_name", "company_domain", "segment_size", "segment_region",
+                                          "segment_vertical", "segment_startup", "segment_agency"])
     write(a.out, "w1-input-sources.csv", picked, ["input_id", "company", "company_domain", "cell", "size_basis", "employees",
                                                   "hq_country", "source", "person_source_url", "domain_source_url",
                                                   "domain_source", "employees_source_url"])
@@ -404,11 +462,13 @@ def cmd_w1_assemble(a):
     sized = [r for r in picked if r.get("employees")]
     sample = rng.sample(sized, min(a.firmographic_sample, len(sized)))
     write(a.out, "w1-firmographics-truth.candidates.csv",
-          [{"input_id": r["input_id"], "true_employee_count": r["employees"], "true_industry": "unknown",
+          [{"input_id": r["input_id"], "true_employee_count": r["employees"], "true_industry": r.get("segment_vertical") or "unknown",
             "true_hq_country": r.get("hq_country", ""), "source_url": r.get("employees_source_url", "")} for r in sample],
           ["input_id", "true_employee_count", "true_industry", "true_hq_country", "source_url"])
     print("cell counts:", dict(sorted(counts.items())))
-    print("Record these in the waterfall config (disclosures.cells.counts) before freezing; map industries in the firmographic key.")
+    print("verticals:", dict(collections.Counter(r["segment_vertical"] or "unknown" for r in picked).most_common()))
+    print("startups:", sum(r["segment_startup"] == "Y" for r in picked), "| agencies:", sum(r["segment_agency"] == "Y" for r in picked))
+    print("Record the cell counts in the waterfall config (disclosures.cells.counts) before freezing.")
 
 
 def cmd_domains(a):
@@ -493,7 +553,7 @@ def build_parser():
         companies=dict(type=int, default=300), per_company=dict(type=int, default=2), seed=dict(type=int, default=2026))
     cmd("w1-assemble", cmd_w1_assemble, "merge candidate pools into w1-input.csv, capped per size x region cell",
         candidates=dict(required=True, help="folder with contacts / public-contacts / uk-contacts candidate files"),
-        cells=dict(default="smb/us,mid/us,ent/us,smb/emea"), cap=dict(type=int, default=400),
+        cells=dict(default="smb/na,mid/na,ent/na,smb/emea"), cap=dict(type=int, default=400),
         firmographic_sample=dict(type=int, default=200), seed=dict(type=int, default=2026))
     cmd("domains", cmd_domains, "company domains from the company's own homepage (title must name the company)",
         companies=dict(required=True, help="CSV with a company or name column, e.g. formd-filings.csv"),

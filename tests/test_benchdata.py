@@ -174,7 +174,7 @@ class BenchDataTest(unittest.TestCase):
         [c] = read(self.out / "public-contacts.candidates.csv")
         self.assertEqual((c["first_name"], c["last_name"], c["title"]), ("Jane", "Smith", "Chief Marketing Officer"))
         self.assertEqual((c["company_domain"], c["domain_source"], c["employees"]), ("acme.example.com", "sec", "1240"))
-        self.assertEqual((c["segment_size"], c["segment_region"]), ("ent", "us"))
+        self.assertEqual((c["segment_size"], c["segment_region"]), ("ent", "na"))
         self.assertEqual(build.split_sec_name("DOE JOHN A JR"), ("John", "Doe"))
         self.assertEqual((build.size_segment(50), build.size_segment(51), build.size_segment(1001)), ("smb", "mid", "ent"))
 
@@ -227,11 +227,22 @@ class BenchDataTest(unittest.TestCase):
         build.main(["w1-assemble", "--out", str(self.out), "--candidates", str(c), "--cap", "3"])
         rows = read(self.out / "w1-input.csv")
         cells = collections.Counter(f"{r['segment_size']}/{r['segment_region']}" for r in rows)
-        self.assertEqual(dict(cells), {"smb/us": 3, "ent/us": 2})   # capped, no APAC, no domainless row, F0 once, gold kept
+        self.assertEqual(dict(cells), {"smb/na": 3, "ent/na": 2})   # capped, no APAC, no domainless row, F0 once, gold kept
+        self.assertEqual({r["segment_startup"] for r in rows if r["segment_size"] == "smb"}, {"Y"})
         [g] = read(self.out / "w1-email-gold.candidates.csv")
         self.assertEqual((g["input_id"], g["known_email"]), ("W0001", "gina.gold@big.example.com"))
         gold_row = next(r for r in rows if r["input_id"] == "W0001")
         self.assertEqual((gold_row["first_name"], gold_row["company_domain"], gold_row["segment_size"]), ("Gina", "big.example.com", "ent"))
+
+    def test_verticals_and_agencies(self):
+        self.assertEqual(build.vertical("Services-Prepackaged Software"), "Software")
+        self.assertEqual(build.vertical("Biotechnology"), "Healthcare")
+        self.assertEqual(build.vertical("", "73110"), "Marketing and media")
+        self.assertEqual(build.vertical("", "62012"), "Software")
+        self.assertEqual(build.vertical("Unclassifiable"), "")
+        self.assertTrue(build.is_agency("", "62012;73110"))
+        self.assertTrue(build.is_agency("Services-Advertising Agencies"))
+        self.assertEqual((build.region("CA"), build.region("GB"), build.region("JP"), build.region("BR")), ("na", "emea", "apac", ""))
 
     def test_companies_house(self):
         nums = self.csv_of("uk.csv", [["09999999"]], ["company_number"])
