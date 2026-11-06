@@ -499,6 +499,7 @@ def cmd_w1_assemble(a):
         if counts[r["cell"]] < a.cap:
             counts[r["cell"]] += 1
             picked.append(r)
+    rng.shuffle(picked)   # gold rows mustn't sit together at the top of the input
     for i, r in enumerate(picked, 1):
         r["input_id"] = f"W{i:04d}"
     write(a.out, "w1-input.csv", picked, ["input_id", "first_name", "last_name", "company_domain", "segment_size", "segment_region",
@@ -540,18 +541,35 @@ def cmd_t1_assemble(a):
     """T1 input: people at matched domains, none at a company already in the W1 input (no overlap)."""
     d = Path(a.candidates)
     exclude = {r["company_domain"].lower() for r in read(a.exclude)} if a.exclude else set()
+    gold = []   # named, on-domain press contacts at the pool's public companies: known emails, kept first
+    if (d / "press-contacts.candidates.csv").exists() and (d / "public-contacts.candidates.csv").exists():
+        co = {}
+        for r in read(d / "public-contacts.candidates.csv"):
+            co.setdefault(r["cik"].lstrip("0"), r)
+        for r in read(d / "press-contacts.candidates.csv"):
+            c = co.get(r["cik"].lstrip("0"))
+            if r["on_domain"] == "True" and r["name"] and c and c["company_domain"] and len(r["name"].split()) >= 2:
+                gold.append({"first_name": r["name"].split()[0], "last_name": r["name"].split()[-1], "company": c["company"],
+                             "company_domain": c["company_domain"], "hq_country": c["hq_country"], "source": "press-release (gold)",
+                             "known_email": r["email"], "person_source_url": r["source_url"]})
     seen, rows = set(), []
-    for r in _contact_pool(d):
+    for r in gold + _contact_pool(d):
         dom = (r["company_domain"] or "").lower()
         key = (r["first_name"].lower(), r["last_name"].lower(), dom)
         if all(key) and key not in seen and dom not in exclude and region(r.get("hq_country", "")):
             seen.add(key)
             rows.append(r)
-    random.Random(a.seed).shuffle(rows)
-    rows = rows[: a.rows]
+    head = [r for r in rows if r.get("known_email")]
+    rest = [r for r in rows if not r.get("known_email")]
+    random.Random(a.seed).shuffle(rest)
+    rows = (head + rest)[: a.rows]
+    random.Random(a.seed + 1).shuffle(rows)   # gold rows mustn't sit together at the top of the input
     for i, r in enumerate(rows, 1):
         r["input_id"] = str(i)
     write(a.out, "t1-input.csv", rows, ["input_id", "first_name", "last_name", "company_domain"])
+    write(a.out, "t1-email-gold.candidates.csv",
+          [{"input_id": r["input_id"], "known_email": r["known_email"], "known_phone": "", "source_url": r["person_source_url"]}
+           for r in rows if r.get("known_email")], ["input_id", "known_email", "known_phone", "source_url"])
     write(a.out, "t1-input-sources.csv", rows, ["input_id", "company", "company_domain", "hq_country", "source",
                                                 "person_source_url", "domain_source_url"])
     print(f"{len(rows)} rows; regions: {dict(collections.Counter(region(r.get('hq_country', '')) for r in rows))}; "

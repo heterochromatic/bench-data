@@ -245,8 +245,8 @@ class BenchDataTest(unittest.TestCase):
         self.assertEqual(dict(cells), {"smb/na": 3, "ent/na": 2})   # capped, no APAC, no domainless row, F0 once, gold kept
         self.assertEqual({r["segment_startup"] for r in rows if r["segment_size"] == "smb"}, {"Y"})
         [g] = read(self.out / "w1-email-gold.candidates.csv")
-        self.assertEqual((g["input_id"], g["known_email"]), ("W0001", "gina.gold@big.example.com"))
-        gold_row = next(r for r in rows if r["input_id"] == "W0001")
+        self.assertEqual(g["known_email"], "gina.gold@big.example.com")
+        gold_row = next(r for r in rows if r["input_id"] == g["input_id"])
         self.assertEqual((gold_row["first_name"], gold_row["company_domain"], gold_row["segment_size"]), ("Gina", "big.example.com", "ent"))
 
     def test_t1_excludes_w1_companies_and_t5_dedupes(self):
