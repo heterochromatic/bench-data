@@ -42,7 +42,10 @@ def find_board(domain, name=""):
     """First public board found for the company: (board, slug, jobs), or (None, None, [])."""
     for slug in slugs(domain, name):
         for board, tmpl in BOARDS.items():
-            data = http.get_json(tmpl.format(slug=urllib.parse.quote(slug)))
+            try:
+                data = http.get_json(tmpl.format(slug=urllib.parse.quote(slug)))
+            except http.FetchError:
+                data = None   # some boards answer 403 instead of 404 for a company that has no board
             jobs = normalize_jobs(board, data) if data else []
             if jobs:
                 return board, slug, jobs

@@ -350,6 +350,10 @@ class BenchDataTest(unittest.TestCase):
         same = http._DropAuthOnRedirect().redirect_request(req, None, 302, "Found", {}, "https://api.example.org/f2")
         self.assertTrue(same.has_header("Authorization"))
 
+    def test_job_board_403_means_no_board(self):
+        http.transport = lambda url, h, t: (403, b"") if "ashbyhq" in url else (404, b"")
+        self.assertEqual(sources.find_board("nothere.example.com"), (None, None, []))
+
     def test_retry_then_give_up(self):
         http.transport = lambda url, h, t: (503, b"")
         orig_sleep = http.time.sleep
