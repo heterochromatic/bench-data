@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<ownershipDocument>
+  <periodOfReport>2026-09-01</periodOfReport>
+  <issuer><issuerCik>0006000006</issuerCik><issuerName>Delta Board Co</issuerName></issuer>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerCik>0002000002</rptOwnerCik><rptOwnerName>Smith Jane</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship><isOfficer>0</isOfficer><isDirector>1</isDirector></reportingOwnerRelationship>
+  </reportingOwner>
+</ownershipDocument>

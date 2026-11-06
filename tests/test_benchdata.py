@@ -115,6 +115,21 @@ class BenchDataTest(unittest.TestCase):
         self.assertEqual((t["true_title"], t["true_company"], t["changed"]), ("CMO", "Gamma Cloud Corp", "Y"))
         self.assertIn("2026-06-15", t["officer_changes_at_seed_company"])
 
+    def test_board_seat_elsewhere_is_not_a_job_change(self):
+        build.main(["officers", "--out", str(self.out), "--since", "2025-06-01", "--until", "2025-06-30"])
+        sub = (FIX / "sub-jane.json").read_text()
+        orig = http.transport
+        def t(url, h, to):
+            if "CIK0002000002.json" in url:
+                return 200, sub.replace("xslF345X05/form4-2026.xml", "xslF345X05/form4-director-elsewhere.xml").encode()
+            if "form4-director-elsewhere.xml" in url:
+                return 200, (FIX / "form4-director-elsewhere.xml").read_bytes()
+            return orig(url, h, to)
+        http.transport = t
+        build.main(["officers-truth", "--out", str(self.out), "--seed", str(self.out / "officers-seed.csv"), "--recent-days", "100000"])
+        [r] = read(self.out / "t3-ground-truth.candidates.csv")
+        self.assertEqual((r["changed"], r["true_company"]), ("N", "Acme Software Inc"))   # the 2025 officer filing at Acme still counts
+
     def test_officers_truth_unknown_when_stale(self):
         build.main(["officers", "--out", str(self.out), "--since", "2025-06-01", "--until", "2025-06-30"])
         build.main(["officers-truth", "--out", str(self.out), "--seed", str(self.out / "officers-seed.csv"), "--recent-days", "1"])

@@ -118,28 +118,33 @@ def cmd_officers(a):
 
 
 def cmd_officers_truth(a):
-    """Current role of each seed officer from their latest Form 3/4, plus the issuer's 8-K Item 5.02s."""
+    """Current role of each seed officer from their recent Forms 3/4.
+    Their newest recent filing *as an officer* decides: at the seed company -> N, at another company -> Y,
+    none -> unknown. A board seat elsewhere is not a job change, so non-officer filings are skipped.
+    The seed company's 8-K Item 5.02 filings are listed for reference."""
     cutoff = (date.today() - timedelta(days=a.recent_days)).isoformat()
     out, seed = [], read(a.seed)
     for i, s in enumerate(seed, 1):
-        filings = [f for f in sec.recent_filings(sec.submissions(s["owner_cik"]) or {}) if f["form"] in ("3", "4")]
-        latest = next(iter(filings), None)
+        me_cik, seed_issuer = s["owner_cik"].lstrip("0"), s["issuer_cik"].lstrip("0")
+        recent = [f for f in sec.recent_filings(sec.submissions(s["owner_cik"]) or {})
+                  if f["form"] in ("3", "4") and f["date"] >= cutoff][: a.max_filings]
         row = {"record_id": s["record_id"], "true_title": "unknown", "true_company": "unknown", "changed": "unknown",
-               "latest_filing": "", "evidence_url": "", "officer_changes_at_seed_company": "", "retrieved_at": http.now()}
-        if latest:
-            people, url = sec.ownership(s["owner_cik"], latest["accession"], latest["doc"])
-            me = next((p for p in people if p["owner_cik"].lstrip("0") == s["owner_cik"].lstrip("0")), None)
-            row.update(latest_filing=latest["date"], evidence_url=url)
-            if me and latest["date"] >= cutoff:
-                row.update(true_title=me["officer_title"] or "unknown", true_company=me["issuer_name"],
-                           changed="Y" if me["issuer_cik"].lstrip("0") != s["issuer_cik"].lstrip("0") else "N")
+               "latest_filing": recent[0]["date"] if recent else "", "evidence_url": "", "officer_changes_at_seed_company": "",
+               "retrieved_at": http.now()}
+        for f in recent:   # newest first
+            people, url = sec.ownership(s["owner_cik"], f["accession"], f["doc"])
+            me = next((p for p in people if p["owner_cik"].lstrip("0") == me_cik and p["is_officer"]), None)
+            if me:
+                row.update(true_title=me["officer_title"] or "unknown", true_company=me["issuer_name"], evidence_url=url,
+                           changed="N" if me["issuer_cik"].lstrip("0") == seed_issuer else "Y")
+                break
         changes = sec.officer_changes(sec.submissions(s["issuer_cik"]) or {}, since=s["as_of"])
         row["officer_changes_at_seed_company"] = ";".join(f"{c['date']} {sec.archive_url(s['issuer_cik'], c['accession'], c['doc'])}" for c in changes)
         out.append(row)
         progress(i, len(seed))
     write(a.out, "t3-ground-truth.candidates.csv", out, ["record_id", "true_title", "true_company", "changed", "latest_filing",
                                                        "evidence_url", "officer_changes_at_seed_company", "retrieved_at"])
-    print("Review: rows marked unknown, and any row with officer changes at the seed company but changed = N.")
+    print(f"changed: {dict(collections.Counter(r['changed'] for r in out))}")
 
 
 def cmd_firmographics(a):
@@ -683,7 +688,7 @@ def build_parser():
         since=dict(type=day, required=True), until=dict(type=day, required=True), limit=dict(type=int, default=500),
         seed=dict(type=int, default=2026))
     cmd("officers-truth", cmd_officers_truth, "current role of each seed officer: T3 key candidates",
-        seed=dict(required=True), recent_days=dict(type=int, default=270))
+        seed=dict(required=True), recent_days=dict(type=int, default=270), max_filings=dict(type=int, default=6))
     cmd("firmographics", cmd_firmographics, "website, industry, HQ country, 10-K headcount for SEC filers",
         ciks=dict(required=True, help="CSV with a cik (or issuer_cik) column, e.g. formd-filings.csv"), wikidata=dict(action="store_true"),
         headcount=dict(action="store_true"))
