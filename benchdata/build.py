@@ -606,21 +606,64 @@ def cmd_t1_assemble(a):
           f"excluded {len(exclude)} W1 company domains")
 
 
-def cmd_t5_assemble(a):
-    """T5 input: company domains (one per company) from every candidates folder given."""
-    doms, rows = set(), []
-    for folder in a.candidates.split(","):
-        for r in _contact_pool(Path(folder)):
+def _company_facts_pool(folders):
+    """Company-level facts by domain from candidate folders: software-company pulls first, then contact pools."""
+    out = {}
+    for folder in folders:
+        d = Path(folder)
+        for f in (d / "sic-companies.candidates.csv", d / "t5" / "sic-companies.candidates.csv"):
+            if f.exists():
+                for r in read(f):
+                    out.setdefault(r["domain"].lower(), {"domain": r["domain"].lower(), "name": r["name"], "employees": r["employees"],
+                                                         "employees_source_url": r["employees_source_url"], "industry": r["industry"],
+                                                         "hq_country": r["hq_country"], "software_pool": "Y"})
+    for folder in folders:
+        d = Path(folder)
+        filing = {f["company"]: f for f in read(d / "formd-filings.csv")} if (d / "formd-filings.csv").exists() else {}
+        for r in _contact_pool(d):
             dom = (r["company_domain"] or "").lower()
-            if dom and dom not in doms:
-                doms.add(dom)
-                rows.append({"domain": dom, "name": r.get("company", ""), "employees": r.get("employees", ""),
-                             "employees_source_url": r.get("employees_source_url", "")})
-    random.Random(a.seed).shuffle(rows)
-    rows = rows[: a.rows]
+            if dom and dom not in out:
+                f = filing.get(r.get("company", ""), {})
+                out[dom] = {"domain": dom, "name": r.get("company", ""), "employees": r.get("employees", ""),
+                            "employees_source_url": r.get("employees_source_url", ""),
+                            "industry": r.get("industry") or f.get("industry_group", ""), "hq_country": r.get("hq_country", ""),
+                            "software_pool": "N"}
+    return out
+
+
+def t5_qualifies(c):
+    """T5-v2 rule: 50-500 employees AND software AND HQ in North America. Y only if all are proven,
+    N if any is proven false, otherwise unknown."""
+    try:
+        n = int(c["employees"])
+    except (TypeError, ValueError):
+        n = None
+    v, reg = vertical(c.get("industry", "")), region(c.get("hq_country", ""))
+    if (n is not None and not 50 <= n <= 500) or (v and v != "Software") or (c.get("hq_country") and reg != "na"):
+        return "N"
+    return "Y" if n is not None and v == "Software" and reg == "na" else "unknown"
+
+
+def cmd_t5_assemble(a):
+    """T5 input: 1,000 company domains, software-company pool first so roughly 20-30% qualify."""
+    facts = _company_facts_pool(a.candidates.split(","))
+    rng = random.Random(a.seed)
+    soft = [c for c in facts.values() if c["software_pool"] == "Y"]
+    other = [c for c in facts.values() if c["software_pool"] == "N"]
+    rng.shuffle(soft)
+    rng.shuffle(other)
+    rows = (soft[: a.software] + other)[: a.rows]
+    rng.shuffle(rows)
+    for c in rows:
+        c["qualifies"] = t5_qualifies(c)
+        c["industry_mapped"] = vertical(c.get("industry", ""))
     write(a.out, "t5-domains.csv", rows, ["domain"])
-    write(a.out, "t5-companies.csv", rows, ["domain", "name", "employees", "employees_source_url"])
-    print(f"{len(rows)} domains; with headcount: {sum(bool(r['employees']) for r in rows)}")
+    write(a.out, "t5-companies.csv", rows, ["domain", "name", "employees", "employees_source_url", "industry", "hq_country", "software_pool"])
+    write(a.out, "t5-ground-truth.candidates.csv",
+          [{"domain": c["domain"], "employee_count": c["employees"], "headcount_source_url": c["employees_source_url"],
+            "industry": c["industry_mapped"], "hq_country": c["hq_country"], "qualifies": c["qualifies"]} for c in rows],
+          ["domain", "employee_count", "headcount_source_url", "industry", "hq_country", "qualifies"])
+    print(f"{len(rows)} domains; qualifies: {dict(collections.Counter(c['qualifies'] for c in rows))}")
 
 
 def _source_text(url):
@@ -652,6 +695,7 @@ CHECKS = {
                         (r["true_company"].lower() in t.lower() and all(w in t.lower() for w in r["true_title"].lower().split()[:3])),
                         "evidence_url"),
     "firmographics-truth": (lambda r, t: not r["true_employee_count"] or _number_in(t, r["true_employee_count"]), "source_url"),
+    "t5-ground-truth": (lambda r, t: not r["employee_count"] or _number_in(t, r["employee_count"]), "headcount_source_url"),
 }
 
 
@@ -765,9 +809,9 @@ def build_parser():
     cmd("t1-assemble", cmd_t1_assemble, "T1 input: people at matched domains, excluding W1's companies",
         candidates=dict(required=True), exclude=dict(help="W1 input CSV: its company domains are left out"),
         rows=dict(type=int, default=500), seed=dict(type=int, default=2026))
-    cmd("t5-assemble", cmd_t5_assemble, "T5 input: one domain per company from the given candidate folders",
+    cmd("t5-assemble", cmd_t5_assemble, "T5 input and key candidates: 1,000 domains, software companies first",
         candidates=dict(required=True, help="comma-separated candidate folders"), rows=dict(type=int, default=1000),
-        seed=dict(type=int, default=2026))
+        software=dict(type=int, default=400, help="how many from the software-company pull"), seed=dict(type=int, default=2026))
     cmd("domains", cmd_domains, "company domains from the company's own homepage (title must name the company)",
         companies=dict(required=True, help="CSV with a company or name column, e.g. formd-filings.csv"),
         executives=dict(help="formd-executives.csv: also write contacts.candidates.csv for matched companies"),

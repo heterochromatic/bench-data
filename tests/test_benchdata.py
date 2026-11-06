@@ -284,6 +284,14 @@ class BenchDataTest(unittest.TestCase):
         [c] = read(self.out / "sic-companies.candidates.csv")
         self.assertEqual((c["domain"], c["sic"], c["employees"], c["hq_country"]), ("acme.example.com", "7372", "1240", "US"))
 
+    def test_t5_rule(self):
+        q = build.t5_qualifies
+        self.assertEqual(q({"employees": "120", "industry": "Services-Prepackaged Software", "hq_country": "US"}), "Y")
+        self.assertEqual(q({"employees": "900", "industry": "Services-Prepackaged Software", "hq_country": "US"}), "N")
+        self.assertEqual(q({"employees": "120", "industry": "Biotechnology", "hq_country": "US"}), "N")
+        self.assertEqual(q({"employees": "120", "industry": "Services-Prepackaged Software", "hq_country": "GB"}), "N")
+        self.assertEqual(q({"employees": "", "industry": "Services-Prepackaged Software", "hq_country": "US"}), "unknown")
+
     def test_verticals_and_agencies(self):
         self.assertEqual(build.vertical("Services-Prepackaged Software"), "Software")
         self.assertEqual(build.vertical("Biotechnology"), "Healthcare")
