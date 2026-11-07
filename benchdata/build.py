@@ -117,6 +117,41 @@ def cmd_officers(a):
           ["record_id", "jobtitle", "company", "bm_job_changed"])
 
 
+SUFFIX = re.compile(r",?\s+(inc|incorporated|corp|corporation|co|ltd|llc|plc|lp|holdings)\.?$", re.I)
+
+
+def dup_variant(r, i):
+    """A near-duplicate of a CRM contact (tasks/T3.md): alternately a middle initial on the first name
+    (when the filing gives one) or the company's legal suffix dropped, else the company in title case."""
+    first, company = r["firstname"], r["company"]
+    if i % 2 == 0 and r.get("middle"):
+        return {**r, "firstname": f"{first} {r['middle'][0].upper()}."}
+    stripped = SUFFIX.sub("", company).strip()
+    return {**r, "company": stripped if stripped != company else company.title()}
+
+
+def cmd_t3_crm_seed(a):
+    """The T3 HubSpot seed: names split from the SEC owner name, and `pairs` seeded duplicate pairs made
+    by copying a contact over another row, neither in the answer key, with a small difference."""
+    key = {r["record_id"] for r in read(a.key)}
+    rows = []
+    for r in read(a.seed):
+        first, last = split_sec_name(r["name"])
+        parts = r["name"].replace(",", " ").split()
+        rows.append({"record_id": r["record_id"], "firstname": first, "lastname": last, "middle": parts[2] if len(parts) > 2 else "",
+                     "jobtitle": r["jobtitle"], "company": r["company"], "bm_job_changed": "", "dup_of": ""})
+    free = [r for r in rows if r["record_id"] not in key]
+    picked = random.Random(a.rng_seed).sample(free, 2 * a.pairs)
+    originals, replaced = picked[: a.pairs], picked[a.pairs:]
+    by_id = {r["record_id"]: r for r in rows}
+    for i, (o, slot) in enumerate(zip(originals, replaced)):
+        by_id[slot["record_id"]] = {**dup_variant(o, i), "record_id": slot["record_id"], "dup_of": o["record_id"]}
+    rows = [by_id[r["record_id"]] for r in rows]
+    write(a.out, "t3-crm-seed.csv", rows, ["record_id", "firstname", "lastname", "jobtitle", "company", "bm_job_changed", "dup_of"])
+    write(a.out, "t3-seed-export.csv", rows, ["record_id", "jobtitle", "company", "bm_job_changed"])
+    print(f"{len(rows)} contacts, {a.pairs} duplicate pairs (none in the {len(key)}-row key)")
+
+
 def cmd_officers_truth(a):
     """Current role of each seed officer from their recent Forms 3/4.
     Their newest recent filing *as an officer* decides: at the seed company -> N, at another company -> Y,
@@ -786,6 +821,9 @@ def build_parser():
     cmd("officers", cmd_officers, "officers as of a past window (Forms 3/4): the T3 seed",
         since=dict(type=day, required=True), until=dict(type=day, required=True), limit=dict(type=int, default=500),
         seed=dict(type=int, default=2026))
+    cmd("t3-crm-seed", cmd_t3_crm_seed, "T3 HubSpot seed: names, plus seeded duplicate pairs outside the key",
+        seed=dict(required=True, help="officers-seed.csv"), key=dict(required=True, help="t3-ground-truth.csv"),
+        pairs=dict(type=int, default=25), rng_seed=dict(type=int, default=2026))
     cmd("officers-truth", cmd_officers_truth, "current role of each seed officer: T3 key candidates",
         seed=dict(required=True), recent_days=dict(type=int, default=270), max_filings=dict(type=int, default=6))
     cmd("firmographics", cmd_firmographics, "website, industry, HQ country, 10-K headcount for SEC filers",

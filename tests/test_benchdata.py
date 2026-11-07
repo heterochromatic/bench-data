@@ -284,6 +284,12 @@ class BenchDataTest(unittest.TestCase):
         [c] = read(self.out / "sic-companies.candidates.csv")
         self.assertEqual((c["domain"], c["sic"], c["employees"], c["hq_country"]), ("acme.example.com", "7372", "1240", "US"))
 
+    def test_t3_duplicate_variants(self):
+        r = {"firstname": "Janet", "middle": "Anne", "company": "GIBRALTAR INDUSTRIES, INC."}
+        self.assertEqual(build.dup_variant(r, 0)["firstname"], "Janet A.")
+        self.assertEqual(build.dup_variant(r, 1)["company"], "GIBRALTAR INDUSTRIES")
+        self.assertEqual(build.dup_variant({**r, "middle": "", "company": "Acme"}, 0)["company"], "Acme")
+
     def test_t5_rule(self):
         q = build.t5_qualifies
         self.assertEqual(q({"employees": "120", "industry": "Services-Prepackaged Software", "hq_country": "US"}), "Y")
