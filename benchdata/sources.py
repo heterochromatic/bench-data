@@ -11,8 +11,6 @@ from concurrent.futures import ThreadPoolExecutor
 from . import http
 from .sec import html_to_text
 
-# --- Job boards ----------------------------------------------------------------------------------
-
 BOARDS = {
     "greenhouse": "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true",
     "lever": "https://api.lever.co/v0/postings/{slug}?mode=json",
@@ -74,8 +72,6 @@ def sdr_openings(jobs):
     return [(title, url, posted) for title, url, _, posted in jobs if SDR.search(title)]
 
 
-# --- Wikidata ------------------------------------------------------------------------------------
-
 WD_API = "https://www.wikidata.org/w/api.php"
 # Wikimedia asks for a descriptive agent with a contact URL.
 WD_HEADERS = {"User-Agent": "bench-data/0.1 (The Prompting Company benchmark research; https://promptingcompany.com)"}
@@ -105,8 +101,6 @@ def domain_of(url):
     return host.lower().removeprefix("www.")
 
 
-# --- UK Companies House ----------------------------------------------------------------------------
-
 CH = "https://api.company-information.service.gov.uk"
 
 
@@ -134,8 +128,6 @@ def ch_officers(number):
              "occupation": o.get("occupation", ""), "appointed_on": o.get("appointed_on", ""),
              "resigned_on": o.get("resigned_on", "")} for o in (data or {}).get("items", [])]
 
-
-# --- Domain finder (the company's own website) -------------------------------------------------------
 
 LEGAL = {"inc", "incorporated", "corp", "corporation", "co", "company", "llc", "ltd", "limited", "lp", "llp", "plc",
          "pbc", "holdings", "holding", "the", "and", "of"}

@@ -55,11 +55,14 @@ def progress(i, n, every=25):
         print(f"  {i}/{n}", file=sys.stderr, flush=True)
 
 
-# --- Commands ------------------------------------------------------------------------------------
-
 # Form D industry groups that are investment vehicles, not operating companies anyone sells to.
 FUND_GROUPS = {"Pooled Investment Fund", "Investing", "REITS and Finance", "Other Real Estate", "Commercial", "Residential",
                "Other Banking and Financial Services"}
+
+
+def cik_of(row):
+    """The CIK column: `cik` in most inputs, `issuer_cik` in formd-filings.csv."""
+    return row.get("cik") or row["issuer_cik"]   # a file with neither column fails loudly, as before
 
 
 def cmd_formd(a):
@@ -184,7 +187,7 @@ def cmd_officers_truth(a):
 
 def cmd_firmographics(a):
     """Website, industry, HQ country and 10-K headcount for SEC filers: W1 and T5 keys."""
-    out, ciks = [], [r.get("cik") or r["issuer_cik"] for r in read(a.ciks)]   # also reads formd-filings.csv
+    out, ciks = [], [cik_of(r) for r in read(a.ciks)]
     for i, cik in enumerate(ciks, 1):
         sub = sec.submissions(cik)
         if not sub:
@@ -229,8 +232,8 @@ def cmd_press_contacts(a):
     """Named personal emails in 8-K press-release exhibits: known-email (gold) candidates."""
     # The input may carry each company's domain (e.g. from public-contacts): SEC records rarely have one.
     out, inputs = [], read(a.ciks)
-    ciks = [r.get("cik") or r["issuer_cik"] for r in inputs]   # also reads formd-filings.csv
-    known_domain = {(r.get("cik") or r.get("issuer_cik", "")).lstrip("0"): (r.get("company_domain") or "").lower() for r in inputs}
+    ciks = [cik_of(r) for r in inputs]
+    known_domain = {cik_of(r).lstrip("0"): (r.get("company_domain") or "").lower() for r in inputs}
     for i, cik in enumerate(ciks, 1):
         sub = sec.submissions(cik) or {}
         site = known_domain.get(cik.lstrip("0")) or (sources.domain_of(sec.company_facts(sub)["website"]) if sub else "")

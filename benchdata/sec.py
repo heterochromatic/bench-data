@@ -26,8 +26,6 @@ def archive_url(cik, accession, filename=""):
     return f"{WWW}/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/{filename}"
 
 
-# --- Indexes -------------------------------------------------------------------------------------
-
 def _quarters(since, until):
     y, q = since.year, (since.month - 1) // 3 + 1
     while (y, q) <= (until.year, (until.month - 1) // 3 + 1):
@@ -71,8 +69,6 @@ def index(forms, since: date, until: date):
     return out
 
 
-# --- Companies -----------------------------------------------------------------------------------
-
 def submissions(cik):
     # A company's submissions file changes with every new filing, so it is never cached.
     return http.get_json(f"{DATA}/submissions/CIK{int(cik):010d}.json", headers=headers(), cache=False)
@@ -103,8 +99,6 @@ def company_facts(sub):
             "sic": sub.get("sic", ""), "sic_description": sub.get("sicDescription", ""),
             "hq_country": country, "hq_code": code}
 
-
-# --- Forms 3/4: officers --------------------------------------------------------------------------
 
 def raw_xml_name(primary_doc):
     """Form 3/4 primaryDocument points at the XSL-rendered view; the raw XML has the same file name."""
@@ -145,8 +139,6 @@ def ownership(cik, accession, primary_doc=""):
     return (parse_ownership(text) if text else []), url
 
 
-# --- Form D: private funding rounds ---------------------------------------------------------------
-
 def parse_form_d(xml_text):
     root = ET.fromstring(xml_text)
     iss = root.find("primaryIssuer")
@@ -173,8 +165,6 @@ def form_d(cik, accession):
     text = http.get_text(url, headers=headers())
     return (None, [], url) if not text else (*parse_form_d(text), url)
 
-
-# --- 8-K Item 5.02 and 10-K headcount ---------------------------------------------------------------
 
 def officer_changes(sub, since=""):
     """8-K filings reporting Item 5.02 (departure or appointment of officers) since a date."""
@@ -207,28 +197,36 @@ def headcount_from_10k(text):
     """Total headcount stated in a 10-K ("we had approximately 1,240 full-time employees"), searched
     from the Human Capital section first. Returns (count, snippet) or (None, "")."""
     hc = HUMAN_CAPITAL.search(text)
-    # First pass: the company speaking for itself ("we had 2,100 employees"), so a customer's or an
-    # acquired company's headcount ("has more than 200 employees") doesn't win by appearing first.
-    for start, context in [(0, OWN), (0, None)] + ([(hc.start(), CONTEXT)] if hc else []) + [(0, CONTEXT)]:
-        if context is None:   # then "723 full-time and 32 part-time employees": the full-time count
-            for m in FULL_PART.finditer(text):
-                if CONTEXT.search(text[max(0, m.start() - 70): m.start()]):
-                    return int(m.group(1).replace(",", "")), text[max(0, m.start() - 80): m.end() + 40].strip()
+    # First the company speaking for itself ("we had 2,100 employees"), so a customer's or an acquired company's
+    # headcount ("has more than 200 employees") doesn't win by appearing first; then the other patterns in order.
+    return (_count_pass(text, 0, OWN) or _full_time_part(text)
+            or (hc and _count_pass(text, hc.start(), CONTEXT)) or _count_pass(text, 0, CONTEXT) or (None, ""))
+
+
+def _full_time_part(text):
+    """ "723 full-time and 32 part-time employees": the full-time count."""
+    for m in FULL_PART.finditer(text):
+        if CONTEXT.search(text[max(0, m.start() - 70): m.start()]):
+            return int(m.group(1).replace(",", "")), text[max(0, m.start() - 80): m.end() + 40].strip()
+    return None
+
+
+def _count_pass(text, start, context):
+    """The first "N employees" from start whose preceding words match context and that isn't a part of the total."""
+    for m in COUNT.finditer(text, start):
+        words = m.group(3).lower().split()
+        if any(w not in BETWEEN_OK for w in words) or not context.search(text[max(0, m.start() - 70): m.start()]):
             continue
-        for m in COUNT.finditer(text, start):
-            words = m.group(3).lower().split()
-            if any(w not in BETWEEN_OK for w in words) or not context.search(text[max(0, m.start() - 70): m.start()]):
-                continue
-            if PART_BEFORE.search(text[max(0, m.start() - 25): m.start()]) or PART_AFTER.match(text, m.end()):
-                continue   # a department, a country, a union or an earlier year, not the total
-            if m.group(4).lower() == "people" and not re.search(r"employ", text[max(0, m.start() - 80): m.end()], re.I):
-                continue
-            raw = m.group(1).replace(",", "")
-            n = float(raw) * (1_000_000 if m.group(2) else 1)
-            if not 1 <= n <= 3_000_000 or ("," not in m.group(1) and not m.group(2) and 1900 <= n <= 2100):
-                continue
-            return int(n), text[max(0, m.start() - 80): m.end() + 40].strip()
-    return None, ""
+        if PART_BEFORE.search(text[max(0, m.start() - 25): m.start()]) or PART_AFTER.match(text, m.end()):
+            continue   # a department, a country, a union or an earlier year, not the total
+        if m.group(4).lower() == "people" and not re.search(r"employ", text[max(0, m.start() - 80): m.end()], re.I):
+            continue
+        raw = m.group(1).replace(",", "")
+        n = float(raw) * (1_000_000 if m.group(2) else 1)
+        if not 1 <= n <= 3_000_000 or ("," not in m.group(1) and not m.group(2) and 1900 <= n <= 2100):
+            continue
+        return int(n), text[max(0, m.start() - 80): m.end() + 40].strip()
+    return None
 
 
 WEBSITE = re.compile(r"(?:website|web site|internet address)[^.]{0,100}?\b((?:https?://)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}))", re.I)
@@ -268,8 +266,6 @@ def latest_10k_headcount(cik, sub):
     n, snippet = headcount_from_10k(text) if text else (None, "")
     return n, snippet, url
 
-
-# --- Press-release contacts (8-K exhibit 99) ---------------------------------------------------------
 
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 GENERIC = re.compile(r"^(info|ir|investor|investors|press|media|pr|news|contact|hello|sales|support|marketing)@", re.I)
