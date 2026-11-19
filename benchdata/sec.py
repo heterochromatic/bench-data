@@ -4,7 +4,6 @@ their executives), 8-K Item 5.02 (officer changes), 10-K headcount, press-releas
 The SEC requires a contact in every request's User-Agent: set SEC_CONTACT (e.g. "Name email@example.com").
 """
 import html
-import os
 import re
 import xml.etree.ElementTree as ET
 from datetime import date
@@ -16,10 +15,7 @@ DATA = "https://data.sec.gov"
 
 
 def headers():
-    contact = os.environ.get("SEC_CONTACT", "").strip()
-    if not contact:
-        raise http.FetchError("Set SEC_CONTACT to a name and email: the SEC requires it in every request")
-    return {"User-Agent": f"TPC benchmark research {contact}", "Accept-Encoding": "identity"}
+    return {"User-Agent": http.user_agent(), "Accept-Encoding": "identity"}
 
 
 def archive_url(cik, accession, filename=""):

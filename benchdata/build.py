@@ -1,7 +1,7 @@
 """`python3 -m benchdata <command>`: write candidate inputs and answer keys as CSV.
 
 Every row has source_url and retrieved_at. Files ending in `.candidates.csv` are not answer keys yet:
-review disagreements, spot-check 20 rows, then copy the reviewed rows to the key file named in the
+review disagreements, run `verify-sources`, then copy the reviewed rows to the key file named in the
 bench's ANSWER-KEYS.md.
 """
 import argparse
@@ -62,7 +62,7 @@ FUND_GROUPS = {"Pooled Investment Fund", "Investing", "REITS and Finance", "Othe
 
 def cik_of(row):
     """The CIK column: `cik` in most inputs, `issuer_cik` in formd-filings.csv."""
-    return row.get("cik") or row["issuer_cik"]   # a file with neither column fails loudly, as before
+    return row.get("cik") or row["issuer_cik"]   # a file with neither column fails loudly
 
 
 def cmd_formd(a):
@@ -137,8 +137,11 @@ def cmd_t3_crm_seed(a):
     """The T3 HubSpot seed: names split from the SEC owner name, and `pairs` seeded duplicate pairs made
     by copying a contact over another row, neither in the answer key, with a small difference."""
     key = {r["record_id"] for r in read(a.key)}
-    rows = []
-    for r in read(a.seed):
+    rows, seed = [], read(a.seed)
+    missing = [c for c in ("record_id", "name", "jobtitle", "company") if seed and c not in seed[0]]
+    if missing:
+        sys.exit(f"error: {a.seed} has no {', '.join(missing)} column; --seed takes officers-seed.csv, as written by `officers`")
+    for r in seed:
         first, last = split_sec_name(r["name"])
         parts = r["name"].replace(",", " ").split()
         rows.append({"record_id": r["record_id"], "firstname": first, "lastname": last, "middle": parts[2] if len(parts) > 2 else "",
@@ -213,19 +216,15 @@ def cmd_firmographics(a):
 
 
 def cmd_jobs(a):
-    """Public job boards: Salesforce evidence (T5) and open SDR/BDR roles (T2 review reference)."""
+    """Public job boards: open SDR/BDR roles (T2 review reference)."""
     out, companies = [], read(a.companies)
     for i, c in enumerate(companies, 1):
         board, slug, jobs = sources.find_board(c["domain"], c.get("name", ""))
-        strength, url, snippet = sources.salesforce_evidence(jobs)
         sdrs = sources.sdr_openings(jobs)
         out.append({"domain": c["domain"], "board": board or "", "slug": slug or "", "jobs": len(jobs),
-                    "salesforce_evidence": strength or "none", "salesforce_evidence_url": url, "salesforce_snippet": snippet,
                     "sdr_openings": len(sdrs), "sdr_urls": ";".join(u for _, u, _ in sdrs[:5]), "retrieved_at": http.now()})
         progress(i, len(companies))
-    write(a.out, "job-evidence.csv", out, ["domain", "board", "slug", "jobs", "salesforce_evidence", "salesforce_evidence_url",
-                                          "salesforce_snippet", "sdr_openings", "sdr_urls", "retrieved_at"])
-    print("'none' means no public board was found or no ad mentions Salesforce: that's unknown, not N.")
+    write(a.out, "job-evidence.csv", out, ["domain", "board", "slug", "jobs", "sdr_openings", "sdr_urls", "retrieved_at"])
 
 
 def cmd_press_contacts(a):
@@ -376,14 +375,15 @@ def cmd_public_contacts(a):
     """Current officers at SEC-filing companies (recent Forms 3/4), with the company's domain (from
     SEC records, then the website its 10-K states, then its homepage), size from the 10-K's headcount
     and region from its address: W1 mid-market and enterprise rows."""
-    officers, per_issuer = [], {}
+    officers, per_issuer, failed = [], {}, []
     idx = sample(sec.index({"3", "4"}, a.since, a.until), a.seed)
     for r in idx:
         if len(officers) >= a.limit:
             break
         try:
             people, url = sec.ownership(r["cik"], r["accession"])
-        except http.FetchError:
+        except http.FetchError as e:
+            failed.append(f"{r['accession']}: {e}")
             continue
         for p in people:
             ic = p["issuer_cik"].lstrip("0")
@@ -423,6 +423,8 @@ def cmd_public_contacts(a):
     cols = ["first_name", "last_name", "title", "company", "company_domain", "domain_source", "cik", "hq_country", "industry",
             "employees", "segment_size", "segment_region", "filed", "person_source_url", "employees_source_url", "retrieved_at"]
     write(a.out, "public-contacts.candidates.csv", rows, cols)
+    if failed:
+        print(f"{len(failed)} filings couldn't be fetched (first: {failed[0]})")
     ready = [r for r in rows if r["company_domain"]]
     print(f"{len(ready)} of {len(rows)} officers have a company domain; "
           f"size cells: {dict(sorted(collections.Counter(r['segment_size'] or '?' for r in ready).items()))}")
@@ -580,7 +582,7 @@ def cmd_sic_companies(a):
     from that 10-K and HQ country from their SEC record: e.g. software companies for T5."""
     lo, _, hi = a.sic.partition("-")
     lo, hi = int(lo), int(hi or lo)
-    out = []
+    out, failed = [], []
     idx = sample(sec.index({a.form}, a.since, a.until), a.seed)
     for i, r in enumerate(idx, 1):
         if len(out) >= a.limit:
@@ -591,7 +593,8 @@ def cmd_sic_companies(a):
             if not (f["sic"] and lo <= int(f["sic"]) <= hi):
                 continue
             text, kurl = sec.latest_10k(r["cik"], sub)
-        except http.FetchError:
+        except http.FetchError as e:
+            failed.append(f"CIK {r['cik']}: {e}")
             continue
         dom = sources.domain_of(f["website"]) if f["website"] else (sec.website_from_10k(text)[0] if text else "")
         n, _ = sec.headcount_from_10k(text) if text else (None, "")
@@ -603,6 +606,8 @@ def cmd_sic_companies(a):
     write(a.out, "sic-companies.candidates.csv", out, ["domain", "name", "cik", "sic", "industry", "hq_country", "employees",
                                                        "employees_source_url", "source_url", "retrieved_at"])
     print(f"{len(out)} companies in SIC {a.sic}; with headcount: {sum(bool(r['employees']) for r in out)}")
+    if failed:
+        print(f"{len(failed)} companies couldn't be fetched (first: {failed[0]})")
 
 
 def cmd_t1_assemble(a):
@@ -718,7 +723,7 @@ def _source_text(url):
             m = sources.AVG_EMPLOYEES.search(raw)   # the headcount is a tagged value with no visible label
             raw += f" Average number of employees: {m.group(1)}" if m else ""
         else:
-            raw = http.get_text(url, headers=sources.SITE_HEADERS)
+            raw = http.get_text(url, headers=sources.site_headers())
     except http.FetchError:
         return ""
     return sec.html_to_text(raw or "")
@@ -746,10 +751,11 @@ CHECKS = {
 
 def cmd_verify_sources(a):
     """Re-fetch every answer-key candidate's cited source and keep only rows whose value appears in it.
-    Replaces a hand spot-check: every row is checked, by machine, and failures are listed."""
+    Every row is checked, and failures are listed."""
     kind = next(k for k in CHECKS if k in Path(a.file).name)
     check, col = CHECKS[kind]
     rows = read(a.file)
+    http.user_agent()   # stop now if SEC_CONTACT is unset: _source_text would report every row as "no source"
     with ThreadPoolExecutor(max_workers=4) as pool:
         texts = list(pool.map(lambda r: _source_text(r.get(col, "")), rows))
     passed, failed = [], []
@@ -832,7 +838,7 @@ def build_parser():
     cmd("firmographics", cmd_firmographics, "website, industry, HQ country, 10-K headcount for SEC filers",
         ciks=dict(required=True, help="CSV with a cik (or issuer_cik) column, e.g. formd-filings.csv"), wikidata=dict(action="store_true"),
         headcount=dict(action="store_true"))
-    cmd("jobs", cmd_jobs, "public job boards: Salesforce evidence and SDR openings",
+    cmd("jobs", cmd_jobs, "public job boards: SDR openings",
         companies=dict(required=True, help="CSV with domain (and optional name) columns"))
     cmd("press-contacts", cmd_press_contacts, "named emails in 8-K press releases: gold candidates",
         ciks=dict(required=True), since=dict(type=day, required=True), per_company=dict(type=int, default=5))
@@ -849,7 +855,7 @@ def build_parser():
         candidates=dict(required=True, help="folder with contacts / public-contacts / uk-contacts candidate files"),
         cells=dict(default="smb/na,mid/na,ent/na,smb/emea"), cap=dict(type=int, default=400),
         firmographic_sample=dict(type=int, default=200), seed=dict(type=int, default=2026))
-    cmd("verify-sources", cmd_verify_sources, "re-check every answer-key row against its cited source (replaces a hand spot-check)",
+    cmd("verify-sources", cmd_verify_sources, "re-check every answer-key row against its cited source",
         file=dict(required=True, help="a *-email-gold, t3-ground-truth or *-firmographics-truth .candidates.csv"))
     cmd("sic-companies", cmd_sic_companies, "companies in a SIC range that filed a 10-K, with website and headcount",
         sic=dict(required=True, help="e.g. 7370-7374"), since=dict(type=day, required=True), until=dict(type=day, required=True),

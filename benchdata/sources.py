@@ -50,22 +50,7 @@ def find_board(domain, name=""):
     return None, None, []
 
 
-STRONG_SF = re.compile(r"salesforce\s+(admin|administrator|administration|crm|sales cloud|reports?|dashboards?)|\bsfdc\b", re.I)
-ANY_SF = re.compile(r"\bsalesforce\b", re.I)
 SDR = re.compile(r"\b(sdr|bdr|sales development|business development rep)", re.I)
-
-
-def salesforce_evidence(jobs):
-    """Best job ad showing the company uses Salesforce as its CRM: (strength, url, snippet)."""
-    best = (None, "", "")
-    for title, url, text, _ in jobs:
-        m = STRONG_SF.search(text) or STRONG_SF.search(title)
-        if m:
-            return "strong", url, text[max(0, m.start() - 60): m.end() + 60]
-        m = ANY_SF.search(text)
-        if m and not best[0]:
-            best = ("mention", url, text[max(0, m.start() - 60): m.end() + 60])
-    return best
 
 
 def sdr_openings(jobs):
@@ -73,19 +58,22 @@ def sdr_openings(jobs):
 
 
 WD_API = "https://www.wikidata.org/w/api.php"
-# Wikimedia asks for a descriptive agent with a contact URL.
-WD_HEADERS = {"User-Agent": "bench-data/0.1 (The Prompting Company benchmark research; https://promptingcompany.com)"}
+
+
+def site_headers():
+    """For Wikidata (Wikimedia asks for a descriptive agent with a contact) and company homepages."""
+    return {"User-Agent": http.user_agent()}
 
 
 def wikidata_websites(name, limit=3):
     """Official websites (P856) of the top entity matches for a company name: [(qid, label, url)]."""
     hits = http.get_json(WD_API, params={"action": "wbsearchentities", "search": name, "language": "en",
-                                         "type": "item", "limit": limit, "format": "json"}, headers=WD_HEADERS)
+                                         "type": "item", "limit": limit, "format": "json"}, headers=site_headers())
     ids = [h["id"] for h in (hits or {}).get("search", [])]
     if not ids:
         return []
     ents = http.get_json(WD_API, params={"action": "wbgetentities", "ids": "|".join(ids), "props": "claims|labels",
-                                         "languages": "en", "format": "json"}, headers=WD_HEADERS)
+                                         "languages": "en", "format": "json"}, headers=site_headers())
     out = []
     for qid in ids:
         e = (ents or {}).get("entities", {}).get(qid, {})
@@ -135,7 +123,6 @@ TLDS = (".com", ".ai", ".io", ".co")
 PARKED = re.compile(r"\bfor sale\b|buy this domain|parked|hugedomains|godaddy|sedo|dan\.com|spaceship\.com|afternic|this domain|coming soon", re.I)
 TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 SITE_NAME = re.compile(r'<meta[^>]+property=["\']og:site_name["\'][^>]+content=["\']([^"\']+)', re.I)
-SITE_HEADERS = {"User-Agent": "bench-data/0.1 (+https://promptingcompany.com)"}
 
 
 def name_tokens(company):
@@ -178,9 +165,10 @@ def _check(company, domain):
     """(score, first page name) for one guessed domain; (0, "") if it doesn't answer. A site that
     answers with a rate limit, block or server error gets one more try a second later; a domain that
     doesn't exist doesn't, so misses stay fast."""
+    headers = site_headers()   # outside the try: a missing contact must stop the run, not look like a dead domain
     for attempt in range(2):
         try:
-            body = http.get(f"https://{domain}/", headers=SITE_HEADERS, timeout=6, tries=1)
+            body = http.get(f"https://{domain}/", headers=headers, timeout=6, tries=1)
             break
         except http.FetchError as e:
             if e.status is None or attempt:

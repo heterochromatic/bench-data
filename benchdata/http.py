@@ -13,6 +13,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import __version__
+
 
 class FetchError(Exception):
     def __init__(self, msg, status=None):
@@ -29,6 +31,16 @@ _lock = threading.Lock()
 
 def now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def user_agent():
+    """Names this tool and whoever is running it. The SEC requires a contact in every request and
+    Wikimedia asks for one; there is no default, so requests never go out under someone else's name."""
+    contact = os.environ.get("SEC_CONTACT", "").strip()
+    if not contact:
+        raise FetchError('Set SEC_CONTACT to your name and email (e.g. "Your Name you@example.com"): '
+                         "it is sent as the contact in every request, and the SEC requires one")
+    return f"bench-data/{__version__} ({contact})"
 
 
 class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):

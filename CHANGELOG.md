@@ -25,3 +25,12 @@
 
 - The disk cache (`BENCHDATA_CACHE`) no longer serves files that change: a company's submissions file is never cached, and a quarter's `form.idx` only once the quarter is over. Before, `events` run daily could keep reading the first day's copy. Test added.
 - README status reflects live use; CI added (tests and a secret scan).
+
+## v0.1.4 (2026-11-19)
+
+- SEC, Wikidata and company-homepage requests all send `bench-data/<version> (<SEC_CONTACT>)` as their User-Agent. Wikidata and homepage requests used to name The Prompting Company whoever ran the tool. `SEC_CONTACT` is therefore now also needed by `domains` and `uk-contacts`; without it a command stops with a clear message (`verify-sources` used to mark every row "no source" instead).
+- `jobs` no longer looks for Salesforce evidence (the task that used it, T5-v1, was dropped): `job-evidence.csv` loses the three `salesforce_*` columns and keeps SDR openings. `sources.salesforce_evidence` removed.
+- `public-contacts` and `sic-companies` count the filings and companies they couldn't fetch and print the count with the first error, as `formd` does. Before, they were skipped silently.
+- `t3-crm-seed` stops with a clear error when the seed file lacks a `record_id`, `name`, `jobtitle` or `company` column (for example when given the seed export instead of `officers-seed.csv`). First test for the command.
+- `benchdata.__version__` matches the tag (it said 0.1.0 through v0.1.3).
+- README: all 17 commands in the table; the docs name `verify-sources` as the row check before a key is used. `.DS_Store` gitignored; CODEOWNERS and SECURITY.md wording.

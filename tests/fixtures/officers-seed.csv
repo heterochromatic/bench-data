@@ -1,0 +1,6 @@
+record_id,owner_cik,name,jobtitle,company,issuer_cik,as_of,source_url,retrieved_at
+S0001,2000002,SMITH JANE,Chief Marketing Officer,"Acme Software, Inc.",1000001,2025-06-10,https://www.sec.gov/Archives/edgar/data/1000001/000100000125000004/form4-2025.xml,2026-11-01T00:00:00+00:00
+S0002,2000003,DOE JOHN A,Chief Financial Officer,Beta Labs Inc,3000003,2025-06-11,https://www.sec.gov/Archives/edgar/data/3000003/000300000325000001/form4.xml,2026-11-01T00:00:00+00:00
+S0003,2000004,LOPEZ ANA,Chief Executive Officer,Gamma Cloud Corp,4000004,2025-06-12,https://www.sec.gov/Archives/edgar/data/4000004/000400000425000001/form4.xml,2026-11-01T00:00:00+00:00
+S0004,2000005,KIM LEE R,Chief Revenue Officer,Delta Data Ltd,6000006,2025-06-13,https://www.sec.gov/Archives/edgar/data/6000006/000600000625000001/form4.xml,2026-11-01T00:00:00+00:00
+S0005,2000006,PATEL RAVI,General Counsel,Epsilon Systems LLC,7000007,2025-06-14,https://www.sec.gov/Archives/edgar/data/7000007/000700000725000001/form4.xml,2026-11-01T00:00:00+00:00

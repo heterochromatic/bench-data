@@ -2,7 +2,9 @@
     python3 -I -m unittest discover -s tests
 """
 import collections
+import contextlib
 import csv
+import io
 import os
 import sys
 import tempfile
@@ -14,6 +16,7 @@ REPO = Path(__file__).resolve().parents[1]
 FIX = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(REPO))
 
+import benchdata  # noqa: E402
 from benchdata import build, http, sec, sources  # noqa: E402
 
 ROUTES = [  # (substring of URL, fixture file); first match wins
@@ -87,7 +90,10 @@ class BenchDataTest(unittest.TestCase):
             sec.headers()
         os.environ["SEC_CONTACT"] = "Test Runner test@example.com"
         sec.submissions(1000001)
-        self.assertIn("test@example.com", self.fake.calls[-1][1]["User-Agent"])
+        self.assertEqual(self.fake.calls[-1][1]["User-Agent"], f"bench-data/{benchdata.__version__} (Test Runner test@example.com)")
+        os.environ.pop("SEC_CONTACT")
+        with self.assertRaises(http.FetchError):   # homepage checks need the contact too; it isn't read as a dead domain
+            sources.find_domain("Beta Labs Inc")
 
     def test_only_closed_quarters_are_cached(self):
         from datetime import date
@@ -167,12 +173,12 @@ class BenchDataTest(unittest.TestCase):
         self.assertEqual(sec.name_from_email("jsmith@acme.example.com"), "")
         self.assertEqual(sec.contacts_from_text("Contact: investor.relations@acme.example.com")[0][0], "")
 
-    def test_jobs_salesforce_and_sdr(self):
+    def test_jobs_sdr_openings(self):
         companies = self.csv_of("companies.csv", [["acme.example.com", "Acme"]], ["domain", "name"])
         build.main(["jobs", "--out", str(self.out), "--companies", companies])
         [j] = read(self.out / "job-evidence.csv")
-        self.assertEqual((j["board"], j["salesforce_evidence"], j["sdr_openings"]), ("greenhouse", "strong", "1"))
-        self.assertTrue(j["salesforce_evidence_url"].endswith("/jobs/2"))
+        self.assertEqual((j["board"], j["jobs"], j["sdr_openings"]), ("greenhouse", "2", "1"))
+        self.assertTrue(j["sdr_urls"].endswith("/jobs/1"))
 
     def test_events_watchlist(self):
         ciks = self.csv_of("watch.csv", [["1000001"], ["3000003"]], ["cik"])
@@ -290,6 +296,28 @@ class BenchDataTest(unittest.TestCase):
         build.main(["sic-companies", "--out", str(self.out), "--sic", "7370-7374", "--since", "2026-01-01", "--until", "2026-03-31"])
         [c] = read(self.out / "sic-companies.candidates.csv")
         self.assertEqual((c["domain"], c["sic"], c["employees"], c["hq_country"]), ("acme.example.com", "7372", "1240", "US"))
+
+    def test_fetch_failures_are_counted(self):
+        orig = http.transport
+        http.transport = lambda u, h, t: (403, b"") if "000100000125000004/" in u else orig(u, h, t)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            build.main(["public-contacts", "--out", str(self.out), "--since", "2025-06-01", "--until", "2025-06-30"])
+        self.assertIn("1 filings couldn't be fetched (first: 0001000001-25-000004", buf.getvalue())
+        self.assertEqual(read(self.out / "public-contacts.candidates.csv"), [])
+
+    def test_t3_crm_seed_pairs_and_missing_name(self):
+        key = self.csv_of("t3-ground-truth.csv", [["S0001"]], ["record_id"])
+        build.main(["t3-crm-seed", "--out", str(self.out), "--seed", str(FIX / "officers-seed.csv"), "--key", key, "--pairs", "2"])
+        rows = read(self.out / "t3-crm-seed.csv")
+        self.assertEqual((rows[0]["firstname"], rows[0]["lastname"], rows[0]["dup_of"]), ("Jane", "Smith", ""))   # key rows stay as they are
+        dups = [r for r in rows if r["dup_of"]]
+        self.assertEqual((len(rows), len(dups)), (5, 2))
+        self.assertNotIn("S0001", {r["dup_of"] for r in dups})
+        export = self.csv_of("t3-seed-export.candidates.csv", [["S0001", "CMO", "Acme"]], ["record_id", "jobtitle", "company"])
+        with self.assertRaises(SystemExit) as e:
+            build.main(["t3-crm-seed", "--out", str(self.out), "--seed", export, "--key", key])
+        self.assertIn("has no name column", str(e.exception))
 
     def test_t3_duplicate_variants(self):
         r = {"firstname": "Janet", "middle": "Anne", "company": "GIBRALTAR INDUSTRIES, INC."}
