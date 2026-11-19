@@ -4,7 +4,7 @@ Builds benchmark inputs and **candidate** answer keys from free, first-hand publ
 
 Its output is never an answer key on its own. Per each bench repo's `ANSWER-KEYS.md`: review the rows the two sources disagree on, spot-check 20 random rows by hand, then copy the reviewed rows to the key file.
 
-**Status:** tested offline against recorded responses only. Nothing has been fetched from a live source yet.
+**Status:** used live to build the inputs and answer keys for clay-bench-ease-pricing and clay-bench-enrichment-waterfall (November 2026); the unit tests run offline against recorded responses.
 
 ## Setup
 
