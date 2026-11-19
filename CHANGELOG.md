@@ -20,3 +20,8 @@
 - SEC paced at ~4/s with long 429 backoff; failed Form D filings skipped; more parked-page patterns.
 - Headcount fixes (2026-11-05): `headcount_from_10k` now prefers the company's own statement ("we had 2,100 employees"), takes the full-time count from "723 full-time and 32 part-time", and skips department, union and growth figures; it had misread 70 of 787 10-K headcounts (part-time counts, acquired companies). `verify-sources` now needs the number as a whole number near a word for staff, not anywhere in the filing, and reads the tagged headcount in UK accounts. T5: "IT services" industry codes (SIC 7373/7374) count as unknown, not as proof a company isn't software.
 - `t3-crm-seed` (2026-11-06): the T3 HubSpot seed with first and last names, plus seeded duplicate pairs (a middle initial, or the company suffix dropped) built only from rows outside the answer key.
+
+## v0.1.3 (2026-11-18)
+
+- The disk cache (`BENCHDATA_CACHE`) no longer serves files that change: a company's submissions file is never cached, and a quarter's `form.idx` only once the quarter is over. Before, `events` run daily could keep reading the first day's copy. Test added.
+- README status reflects live use; CI added (tests and a secret scan).

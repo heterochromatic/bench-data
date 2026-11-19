@@ -53,11 +53,18 @@ def parse_form_index(text):
     return rows
 
 
+def quarter_closed(y, q, today=None):
+    """True once the quarter is over (its full index no longer changes)."""
+    return (date(y + 1, 1, 1) if q == 4 else date(y, 3 * q + 1, 1)) <= (today or date.today())
+
+
 def index(forms, since: date, until: date):
     """Filings of the given form types filed between two dates (quarterly full index)."""
     out = []
     for y, q in _quarters(since, until):
-        text = http.get_text(f"{WWW}/Archives/edgar/full-index/{y}/QTR{q}/form.idx", headers=headers())
+        # A quarter's index keeps growing until the quarter ends, so only closed quarters are cached.
+        text = http.get_text(f"{WWW}/Archives/edgar/full-index/{y}/QTR{q}/form.idx", headers=headers(),
+                             cache=quarter_closed(y, q))
         for r in parse_form_index(text or ""):
             if r["form"] in forms and since.isoformat() <= r["date"] <= until.isoformat():
                 out.append(r)
@@ -67,7 +74,8 @@ def index(forms, since: date, until: date):
 # --- Companies -----------------------------------------------------------------------------------
 
 def submissions(cik):
-    return http.get_json(f"{DATA}/submissions/CIK{int(cik):010d}.json", headers=headers())
+    # A company's submissions file changes with every new filing, so it is never cached.
+    return http.get_json(f"{DATA}/submissions/CIK{int(cik):010d}.json", headers=headers(), cache=False)
 
 
 def recent_filings(sub):

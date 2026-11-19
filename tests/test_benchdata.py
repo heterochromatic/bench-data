@@ -89,6 +89,13 @@ class BenchDataTest(unittest.TestCase):
         sec.submissions(1000001)
         self.assertIn("test@example.com", self.fake.calls[-1][1]["User-Agent"])
 
+    def test_only_closed_quarters_are_cached(self):
+        from datetime import date
+        from benchdata.sec import quarter_closed
+        self.assertTrue(quarter_closed(2026, 3, date(2026, 11, 18)))
+        self.assertFalse(quarter_closed(2026, 4, date(2026, 11, 18)))   # the current quarter's index still grows
+        self.assertTrue(quarter_closed(2026, 4, date(2027, 1, 1)))
+
     def test_form_index_and_dedupe(self):
         rows = sec.parse_form_index((FIX / "form.idx").read_text())
         self.assertEqual(rows[0], {"form": "4", "company": "ACME SOFTWARE INC", "cik": "1000001", "date": "2025-06-10",
