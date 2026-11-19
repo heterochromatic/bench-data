@@ -4,7 +4,7 @@ Builds benchmark inputs and **candidate** answer keys from free, first-hand publ
 
 Its output is never an answer key on its own. Per each bench repo's `ANSWER-KEYS.md`: review the rows the two sources disagree on, spot-check 20 random rows by hand, then copy the reviewed rows to the key file.
 
-**Status:** used live to build the inputs and answer keys for clay-bench-ease-pricing and clay-bench-enrichment-waterfall (November 2026); the unit tests run offline against recorded responses.
+**Status:** used live to build the inputs and answer keys for clay-gtm-agent-benchmark and clay-waterfall-enrichment-benchmark (November 2026); the unit tests run offline against recorded responses.
 
 ## Setup
 
@@ -18,7 +18,7 @@ python3 -I -m unittest discover -s tests
 Write outputs into the bench repo's gitignored `private/` folder, never into a committed folder:
 
 ```bash
-OUT=../clay-bench-enrichment-waterfall/private/datasets/candidates
+OUT=../clay-waterfall-enrichment-benchmark/private/datasets/candidates
 ```
 
 ## Commands
