@@ -819,7 +819,7 @@ def build_parser():
 
     def cmd(name, fn, help_, **args):
         s = sub.add_parser(name, help=help_)
-        s.add_argument("--out", required=True, help="output folder, e.g. ../clay-gtm-agent-benchmark/private/datasets/candidates")
+        s.add_argument("--out", required=True, help="output folder, e.g. ../clay-waterfall-enrichment-benchmark/private/datasets/candidates")
         for flag, kw in args.items():
             s.add_argument(f"--{flag.replace('_', '-')}", **kw)
         s.set_defaults(fn=fn)

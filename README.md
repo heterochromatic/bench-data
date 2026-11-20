@@ -4,7 +4,7 @@ Builds benchmark inputs and **candidate** answer keys from free, first-hand publ
 
 Its output is never an answer key on its own. Per each bench repo's `ANSWER-KEYS.md`: review the rows the two sources disagree on, run `verify-sources`, then copy the reviewed rows to the key file.
 
-**Status:** used live to build the inputs and answer keys for clay-gtm-agent-benchmark and clay-waterfall-enrichment-benchmark (November 2026); the unit tests run offline against recorded responses.
+**Status:** used live to build the inputs and answer keys for [clay-waterfall-enrichment-benchmark](https://github.com/promptingcompany/clay-waterfall-enrichment-benchmark) and for a study that isn't published (November 2026); the unit tests run offline against recorded responses.
 
 ## Setup
 
@@ -23,31 +23,33 @@ OUT=../clay-waterfall-enrichment-benchmark/private/datasets/candidates
 
 ## Commands
 
-| Command | Source | Writes | Feeds |
+| Command | Source | Writes | What it builds |
 |---|---|---|---|
-| `formd --since --until [--limit 300]` | SEC Form D | `formd-filings.csv`, `formd-executives.csv` (executive officers only) | T1 and W1 contacts at private US companies; T2 funding reference |
-| `officers --since --until [--limit 500]` | SEC Forms 3/4 in a past window | `officers-seed.csv`, `t3-seed-export.candidates.csv` | T3 seed (officers as a stale CRM held them) |
-| `officers-truth --seed officers-seed.csv` | Each officer's latest Form 3/4; the seed company's 8-K Item 5.02s | `t3-ground-truth.candidates.csv` | T3 key: current title and company, changed Y/N/unknown |
-| `firmographics --ciks file [--headcount] [--wikidata]` | SEC submissions, latest 10-K, Wikidata | `firmographics.candidates.csv` | W1 firmographic key, T5 headcount, domains |
-| `jobs --companies file` | Greenhouse, Lever and Ashby public boards | `job-evidence.csv` | T2 SDR openings |
+| `formd --since --until [--limit 300]` | SEC Form D | `formd-filings.csv`, `formd-executives.csv` (executive officers only) | Contacts at private US companies for an enrichment benchmark; a record of recent funding rounds |
+| `officers --since --until [--limit 500]` | SEC Forms 3/4 in a past window | `officers-seed.csv`, `t3-seed-export.candidates.csv` | Starting list for a CRM-refresh task: officers as a stale CRM held them |
+| `officers-truth --seed officers-seed.csv` | Each officer's latest Form 3/4; the seed company's 8-K Item 5.02s | `t3-ground-truth.candidates.csv` | Key for the CRM-refresh task: current title and company, changed Y/N/unknown |
+| `firmographics --ciks file [--headcount] [--wikidata]` | SEC submissions, latest 10-K, Wikidata | `firmographics.candidates.csv` | Firmographic key: website, industry, HQ country and headcount |
+| `jobs --companies file` | Greenhouse, Lever and Ashby public boards | `job-evidence.csv` | Open SDR/BDR roles per company, as evidence for an account-list task |
 | `press-contacts --ciks file --since` | Named emails in 8-K press-release exhibits | `press-contacts.candidates.csv` | Known-email (gold) candidates; on-domain flag |
-| `events --ciks watchlist --since --until` | SEC 8-K Item 5.02 and Form D | `t4-events.candidates.csv` | T4 event log, run daily during the window |
-| `public-contacts --since --until [--limit 600] [--per-company 2]` | SEC Forms 3/4, submissions and the latest 10-K | `public-contacts.candidates.csv` | Current officers at public companies with domain (SEC record → website stated in the 10-K → homepage), size cell from the 10-K headcount and region: W1 mid-market and enterprise rows |
+| `events --ciks watchlist --since --until` | SEC 8-K Item 5.02 and Form D | `t4-events.candidates.csv` | Log of officer changes and funding rounds for an alerting task, run daily during the window |
+| `public-contacts --since --until [--limit 600] [--per-company 2]` | SEC Forms 3/4, submissions and the latest 10-K | `public-contacts.candidates.csv` | Current officers at public companies with domain (SEC record → website stated in the 10-K → homepage), size cell from the 10-K headcount and region: the waterfall benchmark's mid-market and enterprise rows |
 | `domains --companies file [--executives file]` | The company's own homepage | `domains.candidates.csv` (match / review / unknown), `contacts.candidates.csv` | Domains for Form D companies (they have none on file); contacts ready to enrich: first name, last name, company domain |
 | `uk --numbers file` | UK Companies House | `uk-companies.csv`, `uk-officers.csv` | EMEA contacts; officer resignations as job changes |
-| `uk-contacts [--sic codes] [--company-type ltd] [--companies 300] [--per-company 2]` | UK Companies House (search, officers, filed accounts) and the company's own homepage | `uk-contacts.candidates.csv` | Current directors at active UK companies, with domain and accounts headcount: W1 EMEA rows |
-| `sic-companies --sic 7370-7374 --since --until [--limit 400]` | SEC full index, submissions and the latest 10-K | `sic-companies.candidates.csv` | Companies in a SIC range that filed a 10-K, with website and headcount: the T5 software pool |
-| `t3-crm-seed --seed officers-seed.csv --key t3-ground-truth.csv [--pairs 25]` | The seed and the reviewed T3 key (no fetching) | `t3-crm-seed.csv`, `t3-seed-export.csv` | T3 HubSpot seed: names, plus seeded duplicate pairs outside the key |
-| `w1-assemble --candidates folder [--cells ...] [--cap 400]` | Candidate files already built (no fetching) | `w1-input.csv`, `w1-input-sources.csv`, `w1-email-gold.candidates.csv`, `w1-firmographics-truth.candidates.csv` | W1 input, capped per size × region cell |
-| `t1-assemble --candidates folder [--exclude w1-input.csv] [--rows 500]` | Candidate files already built (no fetching) | `t1-input.csv`, `t1-input-sources.csv`, `t1-email-gold.candidates.csv` | T1 input: people at matched domains, excluding W1's companies |
-| `t5-assemble --candidates folder[,folder] [--rows 1000] [--software 400]` | Candidate files already built (no fetching) | `t5-domains.csv`, `t5-companies.csv`, `t5-ground-truth.candidates.csv` | T5 input and key candidates, software companies first |
+| `uk-contacts [--sic codes] [--company-type ltd] [--companies 300] [--per-company 2]` | UK Companies House (search, officers, filed accounts) and the company's own homepage | `uk-contacts.candidates.csv` | Current directors at active UK companies, with domain and accounts headcount: the waterfall benchmark's EMEA rows |
+| `sic-companies --sic 7370-7374 --since --until [--limit 400]` | SEC full index, submissions and the latest 10-K | `sic-companies.candidates.csv` | Companies in a SIC range that filed a 10-K, with website and headcount, e.g. a pool of software companies for an account list |
+| `t3-crm-seed --seed officers-seed.csv --key t3-ground-truth.csv [--pairs 25]` | The seed and the reviewed key from `officers-truth` (no fetching) | `t3-crm-seed.csv`, `t3-seed-export.csv` | HubSpot import for the CRM-refresh task: names, plus seeded duplicate pairs outside the key |
+| `w1-assemble --candidates folder [--cells ...] [--cap 400]` | Candidate files already built (no fetching) | `w1-input.csv`, `w1-input-sources.csv`, `w1-email-gold.candidates.csv`, `w1-firmographics-truth.candidates.csv` | Contact list for the waterfall benchmark (its task W1), capped per size × region cell |
+| `t1-assemble --candidates folder [--exclude w1-input.csv] [--rows 500]` | Candidate files already built (no fetching) | `t1-input.csv`, `t1-input-sources.csv`, `t1-email-gold.candidates.csv` | Contact list for an enrichment benchmark: people at matched domains, none at a company in the `--exclude` file |
+| `t5-assemble --candidates folder[,folder] [--rows 1000] [--software 400]` | Candidate files already built (no fetching) | `t5-domains.csv`, `t5-companies.csv`, `t5-ground-truth.candidates.csv` | Account list with ICP labels (50–500 employees, software, HQ in North America), software companies first |
 | `verify-sources --file key.candidates.csv` | Each row's cited source, fetched again | `<key>.verified.csv`, `<key>.rejected.csv` | Every answer-key row re-checked against its cited source |
+
+In command and file names, `w1-` is the waterfall benchmark's task and `t1-` to `t5-` are task numbers from the unpublished study.
 
 Every command also takes `--out <folder>`. Run `python3 -m benchdata <command> -h` for all options.
 
 Input files are plain CSVs with a `cik`, `domain` (and optional `name`) or `company_number` column.
 
-## Example: the T3 seed and key
+## Example: the seed and key for a CRM-refresh task
 
 ```bash
 python3 -m benchdata officers --since 2025-05-01 --until 2025-10-31 --limit 500 --out $OUT
